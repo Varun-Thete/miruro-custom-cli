@@ -1,0 +1,85 @@
+# Miruro Custom CLI Downloader
+
+An advanced, autonomous CLI tool for batch downloading anime streams from Miruro and its providers. Features automatic background tracking, Cloudflare bypass, multi-provider HLS chunk racing, database synchronization, and local media management.
+
+## ✨ Features
+
+- **Automated Tracking (`--auto`)**: Add your favorite series and the CLI will periodically probe and seamlessly download newly aired episodes as they become available.
+- **Stealth Cloudflare Bypass**: Automatically spins up headless browser sessions to solve and cache Cloudflare challenges when the API blocks requests.
+- **HLS Chunk Racing Engine**: Intelligently identifies available streams across multiple CDN providers (Animepahe, Anikoto, Icarus, etc.) and parallelizes downloads.
+- **Strict Quality Filtering**: Built-in resolution logic that parses raw HLS metadata and safely falls back or strictly enforces target resolutions (e.g., locking to 1080p).
+- **Sub/Dub Hierarchy**: Prefer Dubs? The CLI searches for Dubs first and gracefully falls back to Subs if a Dub hasn't aired yet. Upgrade logic (`--upgrade-dubs`) allows swapping Subs with Dubs as they release.
+- **Local SQLite Database**: Persists your download history, tracks watched episodes, and prevents duplicate processing.
+
+## 🚀 Installation
+
+### Prerequisites
+- Python 3.10+
+- `ffmpeg` installed and added to your system `PATH` (crucial for stitching HLS streams together)
+- (Optional but recommended) Google Chrome or Chromium (used by `curl_cffi` for advanced TLS fingerprint spoofing and Cloudflare bypass)
+
+### Setup
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/yourusername/miruro-custom-cli.git
+   cd miruro-custom-cli
+   ```
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+## 📚 Usage
+
+### 1. Add Series to Tracking
+Use the AniList ID (or a raw Miruro UUID) to add a series to your local SQLite database:
+```bash
+python downloader.py --add 163142
+```
+*Note: The CLI will proactively query the Miruro API to map Miruro UUIDs back to AniList IDs if needed.*
+
+### 2. Auto-Download New Episodes
+Probe all tracked series in your database, fetch schedules, and download any missing episodes natively to your `Downloads` folder:
+```bash
+python downloader.py --auto
+```
+
+### 3. Target Specific Qualities
+Lock downloads to 1080p specifically:
+```bash
+python downloader.py --auto -q 1080
+```
+
+### 4. Advanced Management
+- **List tracked series:**
+  ```bash
+  python downloader.py --list-tracked
+  ```
+- **Untrack/Remove a series:**
+  ```bash
+  python downloader.py --remove 163142
+  ```
+- **Retry failed downloads:**
+  ```bash
+  python downloader.py --retry-failed
+  ```
+- **Mark an episode as downloaded manually:**
+  ```bash
+  python downloader.py --rec 163142 5
+  ```
+
+## 🛠 Advanced Features
+
+### Smart Stream Resolution Filtering
+Providers sometimes obscure video resolutions, labeling 720p streams identically to 1080p within their JSON endpoints. This CLI parses `.m3u8` master playlists, dynamically evaluates heights, and safely defaults to `0` (Unknown) for streams lacking metadata, ensuring you never accidentally downgrade quality while racing servers.
+
+## 🤝 Contributing
+Contributions, issues, and feature requests are welcome!
+
+## 📝 License
+This project is licensed under the MIT License.
