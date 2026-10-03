@@ -1241,7 +1241,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable verbose tracing for HTTP requests")
     args = parser.parse_args()
 
-    VERSION = "1.3.4"
+    VERSION = "1.3.5"
     print(f"{C.BLUE}◆{C.RESET} {C.BOLD}Miruro CLI{C.RESET} {C.GRAY}v{VERSION}{C.RESET}")
 
     if args.debug:
