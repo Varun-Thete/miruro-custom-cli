@@ -180,14 +180,16 @@ def get_jellyfin_dir(title, anilist_id):
 def download_image(url, dest_path, force=False):
     pass
 
-def fetch_and_add_series(anilist_id, force=False):
-    # Query the Miruro v1 API directly — the old local uvicorn API is gone.
-    # api_v1_request is not yet available here (defined later), so we do a
-    # lightweight search by anilist_id_in which works without a cached UUID.
-    info = api_v1_request("anime", {"anilist_id_in": str(anilist_id), "limit": 1})
+def fetch_and_add_series(anilist_id, force=False, miruro_uuid=None):
     anime = None
-    if info and "data" in info and info["data"]:
-        anime = info["data"][0]
+    if miruro_uuid:
+        # If we already have the UUID, hit the direct endpoint to bypass search indexing delays
+        anime = api_v1_request(f"anime/{miruro_uuid}")
+    else:
+        # Fallback to search query
+        info = api_v1_request("anime", {"anilist_id_in": str(anilist_id), "limit": 1})
+        if info and "data" in info and info["data"]:
+            anime = info["data"][0]
 
     if not anime:
         print(f"{C.RED}✘{C.RESET} Could not fetch metadata for ID {anilist_id} from Miruro API.")
@@ -1379,19 +1381,19 @@ def main():
         print()
         return
 
-    def resolve_input_to_anilist_id(query: str) -> int | None:
+    def resolve_input(query: str) -> tuple[int | None, str | None]:
         if not query:
-            return None
+            return None, None
         # 1. Pure AniList ID
         if query.isdigit():
-            return int(query)
+            return int(query), None
             
         import re
         
         # 2. Extract AniList ID from info URL (e.g. miruro.bz/info/12345)
         m_info = re.search(r'info/(\d+)', query)
         if m_info:
-            return int(m_info.group(1))
+            return int(m_info.group(1)), None
             
         # 3. Extract Miruro UUID from URL (e.g. watch/UUID/..., anime/UUID/...)
         miruro_uuid = query
@@ -1406,19 +1408,19 @@ def main():
             if data and "external_ids" in data and "anilist" in data["external_ids"]:
                 anilist_id = int(data["external_ids"]["anilist"][0])
                 print(f"  {C.GREEN}✔{C.RESET} Resolved to AniList ID: {anilist_id}")
-                return anilist_id
+                return anilist_id, miruro_uuid
             else:
                 print(f"  {C.RED}✘{C.RESET} Failed to resolve AniList ID for {miruro_uuid}.")
-                return None
+                return None, miruro_uuid
                 
-        return None
+        return None, None
 
     if args.add:
         for query in args.add:
             try:
-                anilist_id = resolve_input_to_anilist_id(query)
+                anilist_id, m_uuid = resolve_input(query)
                 if anilist_id:
-                    fetch_and_add_series(anilist_id, force=True)
+                    fetch_and_add_series(anilist_id, force=True, miruro_uuid=m_uuid)
                 else:
                     print(f"  {C.RED}✘{C.RESET} Invalid ID or URL format: {query}")
             except Exception as e:
@@ -1479,7 +1481,7 @@ def main():
 
     manual_id = None
     if args.link:
-        manual_id = resolve_input_to_anilist_id(args.link)
+        manual_id, _ = resolve_input(args.link)
         if not manual_id:
             print(f"{C.RED}✘{C.RESET} Could not parse AniList ID from link or URL.")
             sys.exit(1)
