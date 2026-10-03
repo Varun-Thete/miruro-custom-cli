@@ -685,7 +685,10 @@ def _download_subtitle(subs: list, dest_path: "Path") -> bool:
                 out_path.write_bytes(resp.content)
                 print(f"    {C.GREEN}✔{C.RESET} Downloaded subtitle → {out_path.name}")
                 return True
-            print(f"    {C.YELLOW}⚠{C.RESET} CDN {resp.status_code} ({sub_url[:55]}...)")
+            if resp.status_code == 403:
+                print(f"    {C.YELLOW}⚠{C.RESET} CDN 403 (Referer: {referer}) ({sub_url[:55]}...)")
+            else:
+                print(f"    {C.YELLOW}⚠{C.RESET} CDN {resp.status_code} ({sub_url[:55]}...)")
         except Exception as _se:
             print(f"    {C.YELLOW}⚠{C.RESET} Fetch error ({sub_url[:55]}...): {_se}")
 
@@ -1349,8 +1352,11 @@ def main():
                     results.append((True, prov_name, sub_url, f"{kb} KB → {out_path.name}"))
                     print(f"    {C.GREEN}✔{C.RESET} {resp.status_code} — {kb} KB saved → {out_path.name}")
                 else:
-                    results.append((False, prov_name, sub_url, f"HTTP {resp.status_code}"))
-                    print(f"    {C.RED}✘{C.RESET} HTTP {resp.status_code}")
+                    msg = f"HTTP {resp.status_code}"
+                    if resp.status_code == 403:
+                        msg += f" (Referer: {referer})"
+                    results.append((False, prov_name, sub_url, msg))
+                    print(f"    {C.RED}✘{C.RESET} {msg}")
             except Exception as e:
                 results.append((False, prov_name, sub_url, str(e)))
                 print(f"    {C.RED}✘{C.RESET} Error: {e}")
