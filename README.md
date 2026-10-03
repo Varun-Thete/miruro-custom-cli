@@ -37,11 +37,18 @@ An advanced, autonomous CLI tool for batch downloading anime streams from Miruro
 ## 📚 Usage
 
 ### 1. Add Series to Tracking
-Use the AniList ID (or a raw Miruro UUID) to add a series to your local SQLite database:
+Use the AniList ID, a raw Miruro UUID, or a direct Miruro watch/anime URL to add a series to your local database.
 ```bash
+# By AniList ID
 python downloader.py --add 163142
+
+# By direct Miruro URL
+python downloader.py --add "https://www.miruro.bz/watch/yu-vVgTCWNdDu1JNx2FRonr3tqK71f0z/black-clover-season-2?ep=1"
+
+# With a specific priority (higher priority series are downloaded first during --auto)
+python downloader.py --add 163142 --priority 100
 ```
-*Note: The CLI will proactively query the Miruro API to map Miruro UUIDs back to AniList IDs if needed.*
+*Note: The CLI proactively queries the Miruro API to map URLs and UUIDs seamlessly to their AniList IDs.*
 
 ### 2. Auto-Download New Episodes
 Probe all tracked series in your database, fetch schedules, and download any missing episodes natively to your `Downloads` folder:
@@ -71,6 +78,10 @@ python downloader.py --auto -q 1080
 - **Mark an episode as downloaded manually:**
   ```bash
   python downloader.py --rec 163142 5
+  ```
+- **Update priority for an existing series:**
+  ```bash
+  python downloader.py --add 163142 --priority 50
   ```
 
 ## 🛠 Advanced Features
