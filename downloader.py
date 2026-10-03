@@ -641,29 +641,6 @@ def _download_subtitle(subs: list, dest_path: "Path") -> bool:
     from curl_cffi import requests as _cfr
     from urllib.parse import urlparse
 
-    # Referer/Origin each subtitle CDN requires (captured from real browser traffic).
-    # Subtitles are fetched by the embedded video player — each CDN checks Referer.
-    _CDN_REFERERS = {
-        # keeply.top / icarus CDN: embedded via strm.cx player
-        "keeply.top":            ("https://strm.cx/",           "https://strm.cx"),
-        "strm.cx":               ("https://strm.cx/",           "https://strm.cx"),
-        # anikoto CDN: embedded via megaplay.buzz player
-        "eclipseharbor.world":   ("https://megaplay.buzz/",     "https://megaplay.buzz"),
-        "broforgotsave.online":  ("https://megaplay.buzz/",     "https://megaplay.buzz"),
-        # kickassanime CDN: uses its own domain as Referer
-        "krussdomi.com":         ("https://krussdomi.com/",     "https://krussdomi.com"),
-        # animepahe / aniwaves
-        "animepahe":             ("https://animepahe.ru/",      "https://animepahe.ru"),
-        "aniwaves":              ("https://aniwaves.me/",       "https://aniwaves.me"),
-    }
-
-    def _referer_for(url: str) -> tuple:
-        url_lower = url.lower()
-        for key, rv in _CDN_REFERERS.items():
-            if key in url_lower:
-                return rv
-        return (f"https://{_MIRURO_DOMAIN}/", f"https://{_MIRURO_DOMAIN}")
-
     import requests as _req
 
     for sub in subs:
@@ -685,7 +662,10 @@ def _download_subtitle(subs: list, dest_path: "Path") -> bool:
             print(f"    {C.GRAY}↷{C.RESET} Subtitle already on disk.")
             return True
 
-        referer, origin = _referer_for(sub_url)
+        # Use the dynamic referer extracted directly from the API response
+        referer = sub.get("_referer", f"https://{_MIRURO_DOMAIN}/")
+        # Origin is typically just the Referer without the trailing slash
+        origin = referer.rstrip("/")
         hdrs = {
             "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) "
                            "Gecko/20100101 Firefox/133.0"),
@@ -738,6 +718,14 @@ def discover_all_streams(miruro_id, ep_num, target_cat, target_providers=None, t
             continue
         for prov in track.get("providers", []):
             prov_name = prov.get("provider", "")
+            # Try to grab Referer from the first server entry in this provider
+            dynamic_referer = f"https://{_MIRURO_DOMAIN}/"
+            servers = prov.get("servers", [])
+            if servers:
+                hdrs = servers[0].get("headers") or {}
+                if "Referer" in hdrs:
+                    dynamic_referer = hdrs["Referer"]
+
             for sub in prov.get("subtitles", []):
                 lang = (sub.get("language") or "").lower()
                 label = (sub.get("label") or "").lower()
@@ -745,7 +733,9 @@ def discover_all_streams(miruro_id, ep_num, target_cat, target_providers=None, t
                 is_english = lang in ("en", "eng") or label.startswith("eng")
                 if is_english and url and url not in _seen_sub_urls:
                     _seen_sub_urls.add(url)
-                    _sub_buckets.setdefault(prov_name, []).append(sub)
+                    tagged_sub = dict(sub)
+                    tagged_sub["_referer"] = dynamic_referer
+                    _sub_buckets.setdefault(prov_name, []).append(tagged_sub)
 
     # Provider priority: kickassanime CDN (krussdomi.com) hard-blocks many IPs,
     # so try anikoto and icarus first, kickassanime as last resort.
@@ -1291,6 +1281,15 @@ def main():
                 continue
             for prov in track.get("providers", []):
                 prov_name = prov.get("provider", "unknown")
+                
+                # Try to grab Referer from the first server entry in this provider
+                dynamic_referer = f"https://{_MIRURO_DOMAIN}/"
+                servers = prov.get("servers", [])
+                if servers:
+                    hdrs = servers[0].get("headers") or {}
+                    if "Referer" in hdrs:
+                        dynamic_referer = hdrs["Referer"]
+
                 for sub in prov.get("subtitles", []):
                     lang = (sub.get("language") or sub.get("label", "?")).lower()[:3]
                     url = sub.get("file", "")
@@ -1302,6 +1301,7 @@ def main():
                     if is_eng:
                         tagged = dict(sub)
                         tagged["_prov"] = prov_name
+                        tagged["_referer"] = dynamic_referer
                         all_eng_subs.append(tagged)
         if not found:
             print(f"  {C.YELLOW}⚠{C.RESET} No subtitle tracks found in ssub.")
@@ -1318,21 +1318,6 @@ def main():
         print(f"\n{C.BLUE}◆{C.RESET} Testing all {len(all_eng_subs)} English subtitle source(s)...")
         print(f"  Output dir: {out_dir}\n")
 
-        _CDN_REFERERS_TEST = {
-            "keeply.top":            ("https://strm.cx/",           "https://strm.cx"),
-            "strm.cx":               ("https://strm.cx/",           "https://strm.cx"),
-            "eclipseharbor.world":   ("https://megaplay.buzz/",     "https://megaplay.buzz"),
-            "broforgotsave.online":  ("https://megaplay.buzz/",     "https://megaplay.buzz"),
-            "krussdomi.com":         ("https://krussdomi.com/",     "https://krussdomi.com"),
-            "animepahe":             ("https://animepahe.ru/",      "https://animepahe.ru"),
-            "aniwaves":              ("https://aniwaves.me/",       "https://aniwaves.me"),
-        }
-        def _ref(url):
-            for k, v in _CDN_REFERERS_TEST.items():
-                if k in url.lower():
-                    return v
-            return (f"https://{_MIRURO_DOMAIN}/", f"https://{_MIRURO_DOMAIN}")
-
         results = []
         for i, sub in enumerate(all_eng_subs, 1):
             sub_url = sub.get("file", "")
@@ -1341,7 +1326,8 @@ def main():
             if len(fmt) > 4: fmt = "vtt"
             out_path = out_dir / f"test_ep{ep_num}_src{i}_{prov_name}.{fmt}"
 
-            referer, origin = _ref(sub_url)
+            referer = sub.get("_referer", f"https://{_MIRURO_DOMAIN}/")
+            origin = referer.rstrip("/")
             hdrs = {
                 "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) "
                                "Gecko/20100101 Firefox/133.0"),
