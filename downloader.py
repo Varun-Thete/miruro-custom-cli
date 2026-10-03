@@ -1244,7 +1244,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable verbose tracing for HTTP requests")
     args = parser.parse_args()
 
-    VERSION = "1.3.5"
+    VERSION = "1.3.6"
     print(f"{C.BLUE}◆{C.RESET} {C.BOLD}Miruro CLI{C.RESET} {C.GRAY}v{VERSION}{C.RESET}")
 
     if args.debug:
@@ -1379,27 +1379,48 @@ def main():
         print()
         return
 
+    def resolve_input_to_anilist_id(query: str) -> int | None:
+        if not query:
+            return None
+        # 1. Pure AniList ID
+        if query.isdigit():
+            return int(query)
+            
+        import re
+        
+        # 2. Extract AniList ID from info URL (e.g. miruro.bz/info/12345)
+        m_info = re.search(r'info/(\d+)', query)
+        if m_info:
+            return int(m_info.group(1))
+            
+        # 3. Extract Miruro UUID from URL (e.g. watch/UUID/..., anime/UUID/...)
+        miruro_uuid = query
+        m_watch = re.search(r'(?:watch|anime)/([^/?]+)', query)
+        if m_watch:
+            miruro_uuid = m_watch.group(1)
+            
+        # 4. Resolve UUID via API
+        if len(miruro_uuid) > 20 and not miruro_uuid.isdigit():
+            print(f"  {C.YELLOW}⟳{C.RESET} Resolving Miruro UUID to AniList ID...")
+            data = api_v1_request(f"anime/{miruro_uuid}")
+            if data and "external_ids" in data and "anilist" in data["external_ids"]:
+                anilist_id = int(data["external_ids"]["anilist"][0])
+                print(f"  {C.GREEN}✔{C.RESET} Resolved to AniList ID: {anilist_id}")
+                return anilist_id
+            else:
+                print(f"  {C.RED}✘{C.RESET} Failed to resolve AniList ID for {miruro_uuid}.")
+                return None
+                
+        return None
+
     if args.add:
         for query in args.add:
             try:
-                # If they passed a pure digit, it's an AniList ID
-                if query.isdigit():
-                    fetch_and_add_series(int(query), force=True)
-                # If they passed a Miruro UUID directly (alphanumeric string with - or _)
-                elif len(query) > 20 and not query.isdigit():
-                    # For a pure Miruro UUID, we need to map it back to AniList first.
-                    # Or we can just try to fetch metadata directly.
-                    # Wait, our system primarily tracks by AniList ID.
-                    print(f"  {C.YELLOW}⟳{C.RESET} Resolving Miruro UUID to AniList ID...")
-                    data = api_v1_request(f"anime/{query}")
-                    if data and "external_ids" in data and "anilist" in data["external_ids"]:
-                        anilist_id = int(data["external_ids"]["anilist"][0])
-                        print(f"  {C.GREEN}✔{C.RESET} Resolved to AniList ID: {anilist_id}")
-                        fetch_and_add_series(anilist_id, force=True)
-                    else:
-                        print(f"  {C.RED}✘{C.RESET} Failed to resolve AniList ID for {query}.")
+                anilist_id = resolve_input_to_anilist_id(query)
+                if anilist_id:
+                    fetch_and_add_series(anilist_id, force=True)
                 else:
-                    print(f"  {C.RED}✘{C.RESET} Invalid ID format: {query}")
+                    print(f"  {C.RED}✘{C.RESET} Invalid ID or URL format: {query}")
             except Exception as e:
                 print(f"  {C.RED}✘{C.RESET} Failed to add {query}: {e}")
         return
@@ -1458,16 +1479,10 @@ def main():
 
     manual_id = None
     if args.link:
-        if args.link.isdigit():
-            manual_id = int(args.link)
-        else:
-            import re
-            m = re.search(r'info/(\d+)', args.link)
-            if m:
-                manual_id = int(m.group(1))
-            else:
-                print(f"{C.RED}✘{C.RESET} Could not parse AniList ID from link.")
-                sys.exit(1)
+        manual_id = resolve_input_to_anilist_id(args.link)
+        if not manual_id:
+            print(f"{C.RED}✘{C.RESET} Could not parse AniList ID from link or URL.")
+            sys.exit(1)
                 
         
     if args.untrack and manual_id:
