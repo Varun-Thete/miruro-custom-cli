@@ -167,7 +167,7 @@ def get_jellyfin_dir(title, anilist_id):
             for f in old_thumbs.glob("*.*"): 
                 m = re.match(r'(S\d+E\d+)\.(.+)', f.name)
                 if m:
-                    new_name = f"{safe_title} - {m.group(1)}-thumb.{m.group(2)}"
+                    new_name = f"{legacy_safe} - {m.group(1)}-thumb.{m.group(2)}"
                     f.rename(season_dir / new_name)
             try: old_thumbs.rmdir()
             except OSError: pass
@@ -181,48 +181,52 @@ def download_image(url, dest_path, force=False):
     pass
 
 def fetch_and_add_series(anilist_id, force=False):
-    info = api_get(f"/info/{anilist_id}")
-    if not info:
-        print(f"{C.RED}✘{C.RESET} Could not fetch metadata for ID {anilist_id}. (AniList API might be down or ID is invalid)")
+    # Query the Miruro v1 API directly — the old local uvicorn API is gone.
+    # api_v1_request is not yet available here (defined later), so we do a
+    # lightweight search by anilist_id_in which works without a cached UUID.
+    info = api_v1_request("anime", {"anilist_id_in": str(anilist_id), "limit": 1})
+    anime = None
+    if info and "data" in info and info["data"]:
+        anime = info["data"][0]
+
+    if not anime:
+        print(f"{C.RED}✘{C.RESET} Could not fetch metadata for ID {anilist_id} from Miruro API.")
         if not force:
             print(f"  {C.YELLOW}⚠{C.RESET} Run with --force to add it anyway with a placeholder title.")
             return None
-        
         print(f"  {C.YELLOW}⚠{C.RESET} Force flag used. Adding as 'Unknown Title (ID {anilist_id})'.")
-        title = f"Unknown Title (ID {anilist_id})"
-        info = {}
-    else:
-        title = info.get("title", {}).get("english") or info.get("title", {}).get("romaji") or "Unknown"
+        anime = {}
+
+    # Map v1 field names → our DB schema
+    title_obj = anime.get("title") or {}
+    title = title_obj.get("english") or title_obj.get("romaji") or f"Unknown Title (ID {anilist_id})"
+    miruro_uuid = anime.get("id") or str(anilist_id)
 
     entry = {
         "anime_id": anilist_id,
         "title": title,
-        "uuid": str(anilist_id),
-        "url": f"https://miruro.bz/info/{anilist_id}",
-        "poster": info.get("coverImage", {}).get("extraLarge") if info else None,
-        "cover": info.get("bannerImage") if info else None,
-        "synopsis": info.get("description") if info else None,
-        "status": info.get("status") if info else "Unknown",
-        "total_episodes": info.get("episodes") if info else None,
-        "genres": info.get("genres", []) if info else [],
+        "uuid": miruro_uuid,
+        "url": f"https://www.miruro.bz/watch/{miruro_uuid}",
+        "poster": anime.get("cover_url"),
+        "cover": anime.get("background_url") or anime.get("banner_url"),
+        "synopsis": anime.get("description"),
+        "status": anime.get("status") or "Unknown",
+        "total_episodes": anime.get("episode_count"),
+        "genres": anime.get("genres", []),
         "is_tracked": 1,
         "priority": cfg.default_priority
     }
     db.upsert_series(entry)
     print(f"{C.GREEN}✔{C.RESET} Added to tracking: {title} (ID: {anilist_id})")
-    
-    # Download Poster
-    safe_title = sanitize_filename(title)
+
     series_dir = get_jellyfin_dir(title, anilist_id)
     series_dir.mkdir(parents=True, exist_ok=True)
-    
+
     if entry["poster"]:
         download_image(entry["poster"], series_dir / "poster.jpg")
-        # db.set_poster_local(anilist_id, "poster.jpg")
     if entry["cover"]:
         download_image(entry["cover"], series_dir / "backdrop.jpg")
-        # db.set_cover_local(anilist_id, "backdrop.jpg")
-        
+
     return title
 
 def parse_episodes_arg(ep_str):
@@ -537,45 +541,252 @@ def fetch_v1_episodes(miruro_id: str) -> list | None:
 # Parallel Provider + Server Discovery
 # ==========================================
 
+_CDN_CF_COOKIES: dict = {}   # netloc → cf_clearance value
+_CDN_CF_LOCK = _threading.Lock()
+
+
+def _solve_cf_for_subtitle_cdn(url: str) -> str | None:
+    """
+    Spawn a DrissionPage subprocess to navigate to a subtitle CDN URL,
+    automatically passing any CF challenge, then extract and return the
+    cf_clearance cookie for that domain.  Cached globally per domain.
+    """
+    import subprocess, sys, textwrap
+    from urllib.parse import urlparse
+    netloc = urlparse(url).netloc  # e.g. "0mf2u.eclipseharbor.world"
+    # Use root domain for the cookie scope (works for all subdomains)
+    parts = netloc.split(".")
+    root_domain = ".".join(parts[-2:]) if len(parts) >= 2 else netloc
+
+    solver = textwrap.dedent(f"""
+        import sys, time, json
+        target_url = {repr(url)}
+        root_domain = {repr(root_domain)}
+
+        HARD_BLOCK_SIGNALS = [
+            "you have been blocked",
+            "sorry, you have been blocked",
+            "access denied",
+        ]
+
+        def is_hard_blocked(page):
+            try:
+                title = (page.title or "").lower()
+                body  = (page.run_js("return document.body ? document.body.innerText : ''") or "").lower()
+                for sig in HARD_BLOCK_SIGNALS:
+                    if sig in title or sig in body:
+                        return True
+            except:
+                pass
+            return False
+
+        def solve(headless):
+            from DrissionPage import ChromiumPage, ChromiumOptions
+            opt = ChromiumOptions()
+            opt.headless(headless)
+            opt.set_argument("--no-sandbox")
+            opt.set_argument("--disable-dev-shm-usage")
+            opt.set_argument("--disable-blink-features=AutomationControlled")
+            opt.set_argument("--log-level=3")
+            page = ChromiumPage(addr_or_opts=opt)
+            try:
+                page.get(target_url)
+                deadline = time.monotonic() + 12
+                while time.monotonic() < deadline:
+                    # Bail immediately on hard block (WAF rule, not a solvable challenge)
+                    if is_hard_blocked(page):
+                        sys.stderr.write("hard_blocked\\n")
+                        return
+                    for ck in page.cookies():
+                        if ck.get("name") == "cf_clearance":
+                            domain = ck.get("domain", "")
+                            if root_domain in domain or domain in root_domain:
+                                print(json.dumps({{"cookie": ck["value"], "domain": domain}}), flush=True)
+                                sys.exit(0)
+                    time.sleep(0.5)
+            finally:
+                try: page.quit()
+                except: pass
+
+        for h in [True, False]:
+            try:
+                solve(h)
+            except Exception as e:
+                sys.stderr.write(f"err headless={{h}}: {{e}}\\n")
+        sys.exit(1)
+    """)
+
+    try:
+        import subprocess as _sp, sys as _sys
+        res = _sp.run([_sys.executable, "-c", solver],
+                      capture_output=True, text=True, timeout=60)
+        for line in reversed(res.stdout.strip().splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                data = _json.loads(line)
+                return data.get("cookie")
+    except Exception:
+        pass
+    return None
+
+
+def _download_subtitle(subs: list, dest_path: "Path") -> bool:
+    """
+    Try to download the first working English subtitle from the subs list.
+    Fast path: curl_cffi with browser headers.
+    Slow path: if a CDN returns 403, solve its CF challenge via DrissionPage,
+    cache the cf_clearance cookie, and retry once.
+    Returns True on success.
+    """
+    from curl_cffi import requests as _cfr
+    from urllib.parse import urlparse
+
+    # Referer/Origin each subtitle CDN requires (captured from real browser traffic).
+    # Subtitles are fetched by the embedded video player — each CDN checks Referer.
+    _CDN_REFERERS = {
+        # keeply.top / icarus CDN: embedded via strm.cx player
+        "keeply.top":            ("https://strm.cx/",           "https://strm.cx"),
+        "strm.cx":               ("https://strm.cx/",           "https://strm.cx"),
+        # anikoto CDN: embedded via megaplay.buzz player
+        "eclipseharbor.world":   ("https://megaplay.buzz/",     "https://megaplay.buzz"),
+        "broforgotsave.online":  ("https://megaplay.buzz/",     "https://megaplay.buzz"),
+        # kickassanime CDN: uses its own domain as Referer
+        "krussdomi.com":         ("https://krussdomi.com/",     "https://krussdomi.com"),
+        # animepahe / aniwaves
+        "animepahe":             ("https://animepahe.ru/",      "https://animepahe.ru"),
+        "aniwaves":              ("https://aniwaves.me/",       "https://aniwaves.me"),
+    }
+
+    def _referer_for(url: str) -> tuple:
+        url_lower = url.lower()
+        for key, rv in _CDN_REFERERS.items():
+            if key in url_lower:
+                return rv
+        return (f"https://{_MIRURO_DOMAIN}/", f"https://{_MIRURO_DOMAIN}")
+
+    import requests as _req
+
+    for sub in subs:
+        sub_url = sub.get("file", "")
+        if not sub_url:
+            continue
+        lang = (sub.get("language") or "").lower()
+        label_field = (sub.get("label") or "").lower()
+        if lang not in ("en", "eng") and not label_field.startswith("eng"):
+            continue
+
+        sub_ext = sub.get("format") or sub_url.split(".")[-1]
+        if len(sub_ext) > 4:
+            sub_ext = "vtt"
+        lang_tag = lang[:3] if lang else "en"
+        out_path = dest_path.parent / f"{dest_path.stem}.{lang_tag}.{sub_ext}"
+
+        if out_path.exists():
+            print(f"    {C.GRAY}↷{C.RESET} Subtitle already on disk.")
+            return True
+
+        referer, origin = _referer_for(sub_url)
+        hdrs = {
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) "
+                           "Gecko/20100101 Firefox/133.0"),
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": referer,
+            "Origin": origin,
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "cross-site",
+            "DNT": "1",
+        }
+
+        try:
+            resp = _req.get(sub_url, headers=hdrs, timeout=20, allow_redirects=True)
+            if resp.status_code == 200 and resp.content:
+                out_path.write_bytes(resp.content)
+                print(f"    {C.GREEN}✔{C.RESET} Downloaded subtitle → {out_path.name}")
+                return True
+            print(f"    {C.YELLOW}⚠{C.RESET} CDN {resp.status_code} ({sub_url[:55]}...)")
+        except Exception as _se:
+            print(f"    {C.YELLOW}⚠{C.RESET} Fetch error ({sub_url[:55]}...): {_se}")
+
+    return False
+
 def discover_all_streams(miruro_id, ep_num, target_cat, target_providers=None, target_res=1080):
     """
     Query ALL providers for a specific episode via the v1 play endpoint.
     Returns a list of (url, headers, server_name, subtitles) from every provider.
     Automatically filters out lower resolutions to prevent racing them.
+    Subtitles are always harvested from the 'ssub' track regardless of video category.
     """
-    data = api_v1_request(f"anime/{miruro_id}/episodes/{ep_num}/play")
+    # Episode number must be an integer in the API path (not 1.0)
+    ep_num_int = int(ep_num) if float(ep_num) == int(ep_num) else ep_num
+    data = api_v1_request(f"anime/{miruro_id}/episodes/{ep_num_int}/play")
     if not data or "tracks" not in data:
         return []
-        
-    best_streams_by_server = {}
-    
+
+    # ── Pass 1: harvest English subtitles from ALL ssub providers ──
+    # Subtitle CDN URLs are independent of which video server wins the race,
+    # so we collect English subs from EVERY ssub provider into a flat list.
+    # The download loop tries each URL in order — if one 403s, it falls
+    # through to the next provider's URL automatically.
+    global_subs = []
+    _seen_sub_urls = set()
+    # Collect per-provider English subs in separate buckets first
+    _sub_buckets: dict = {}   # provider_name → [sub_entry, ...]
+    for track in data.get("tracks", []):
+        if track.get("track") != "ssub":
+            continue
+        for prov in track.get("providers", []):
+            prov_name = prov.get("provider", "")
+            for sub in prov.get("subtitles", []):
+                lang = (sub.get("language") or "").lower()
+                label = (sub.get("label") or "").lower()
+                url = sub.get("file", "")
+                is_english = lang in ("en", "eng") or label.startswith("eng")
+                if is_english and url and url not in _seen_sub_urls:
+                    _seen_sub_urls.add(url)
+                    _sub_buckets.setdefault(prov_name, []).append(sub)
+
+    # Provider priority: kickassanime CDN (krussdomi.com) hard-blocks many IPs,
+    # so try anikoto and icarus first, kickassanime as last resort.
+    _DEPRIORITIZED_PROVIDERS = {"kickassanime"}
+    for pname, subs in _sub_buckets.items():
+        if pname not in _DEPRIORITIZED_PROVIDERS:
+            global_subs.extend(subs)
+    for pname, subs in _sub_buckets.items():
+        if pname in _DEPRIORITIZED_PROVIDERS:
+            global_subs.extend(subs)
+
+    # ── Pass 2: collect video streams for the requested category ──
     valid_tracks = [target_cat]
     if target_cat == "sub":
         valid_tracks = ["sub", "ssub"]
-        
+
+    best_streams_by_server = {}
+
     for track in data.get("tracks", []):
         if track.get("track") not in valid_tracks:
             continue
-            
+
         for prov in track.get("providers", []):
             prov_name = prov.get("provider", "")
             if target_providers and prov_name not in target_providers:
                 continue
-                
-            subs = prov.get("subtitles", [])
-            
+
+            # Inject global_subs so every stream entry carries subtitles
+            # regardless of which provider ends up winning the server race.
+            subs = global_subs or prov.get("subtitles", [])
+
             for srv in prov.get("servers", []):
                 srv_name = f"{prov_name}/{srv.get('server', 'Unknown')}"
                 headers = srv.get("headers", {})
-                
-                # Pick best resolution stream for THIS server
+
                 best_url = None
                 best_h = -1
-                
+
                 for stream in srv.get("streams", []):
                     if stream.get("format") == "hls" or "m3u8" in stream.get("url", ""):
-                        h = 0 # Default to 0 (unknown) instead of 9999 so it isn't discarded
-                        # Try resolution object first
+                        h = 0  # Default to 0 (unknown) — don't discard unknown-res streams
                         res_obj = stream.get("resolution")
                         if isinstance(res_obj, dict) and res_obj.get("height"):
                             h = res_obj["height"]
@@ -584,9 +795,8 @@ def discover_all_streams(miruro_id, ep_num, target_cat, target_providers=None, t
                             if "p" in q_str:
                                 try: h = int(q_str.replace("p", "").strip())
                                 except: pass
-                                
+
                         if target_res > 0:
-                            # If unknown (0) or within target resolution
                             if (h == 0 or h <= target_res) and h >= best_h:
                                 best_h = h
                                 best_url = stream["url"]
@@ -594,11 +804,11 @@ def discover_all_streams(miruro_id, ep_num, target_cat, target_providers=None, t
                             if h >= best_h:
                                 best_h = h
                                 best_url = stream["url"]
-                                
+
                 if best_url:
                     best_streams_by_server[srv_name] = (best_url, headers, srv_name, subs)
                     print(f"    {C.BLUE}◆{C.RESET} Selected {best_h}p stream for {srv_name}")
-                        
+
     return list(best_streams_by_server.values())
 
 
@@ -630,6 +840,11 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
             print(f"  {C.BLUE}?{C.RESET} Falling back to sub...")
             ep_data_sub = ep_data.copy()
             ep_data_sub["_target_category"] = "sub"
+            # Also update the original ep_data in place so the caller knows
+            # the final downloaded category was "sub", not "dub". Without this,
+            # the caller would see _target_category="dub" + success=True and
+            # incorrectly delete the existing sub file it just downloaded.
+            ep_data["_target_category"] = "sub"
             return download_episode(anilist_id, title, ep_data_sub, provider, category, target_res, subtitles_only)
         return False
         
@@ -648,19 +863,21 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
             hls_downloader.wait_for_internet()
             return download_episode(anilist_id, title, ep_data, provider, category, target_res, subtitles_only)
             
-        print(f"    {C.RED}?{C.RESET} All servers failed probe for EP {ep_num} ({target_cat}).")
+        print(f"    {C.YELLOW}⚠{C.RESET} All servers failed probe for EP {ep_num} ({target_cat}).")
         if target_cat == "dub":
             safe_title = sanitize_filename(title)
             season_num = extract_season_number(title)
             season_dir = get_jellyfin_dir(title, anilist_id) / f"Season {season_num:02d}"
             sub_file = season_dir / f"{safe_title} - S{season_num:02d}E{int(ep_num):02d}.mp4"
             if sub_file.exists() and not subtitles_only:
-                print(f"  {C.YELLOW}?{C.RESET} Sub version already exists on disk. Skipping redundant sub download.")
+                print(f"  {C.YELLOW}⚠{C.RESET} Sub version already exists on disk. Skipping redundant sub download.")
                 return False
                 
-            print(f"  {C.BLUE}?{C.RESET} Falling back to sub...")
+            print(f"  {C.BLUE}↩{C.RESET} Falling back to sub...")
             ep_data_sub = ep_data.copy()
             ep_data_sub["_target_category"] = "sub"
+            # Mutate original so caller sees the final downloaded category
+            ep_data["_target_category"] = "sub"
             return download_episode(anilist_id, title, ep_data_sub, provider, category, target_res, subtitles_only)
         return False
 
@@ -677,36 +894,11 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
 
     if subtitles_only:
         print(f"    [↓] Skipping video/thumbnail download. Fetching subtitles only...")
-        subs = winner.get("subtitles")
+        subs = winner.get("subtitles") or []
         if subs:
-            downloaded_any = False
-            for sub in subs:
-                sub_url = sub.get("file")
-                if not sub_url:
-                    continue
-                sub_lang = (sub.get("language") or sub.get("label", "en")).lower()
-                if len(sub_lang) > 3:
-                    sub_lang = sub_lang[:3]
-                if sub_lang not in ("en", "eng"):
-                    continue
-                sub_ext = sub.get("format") or sub_url.split('.')[-1]
-                if len(sub_ext) > 4:
-                    sub_ext = "vtt"
-                sub_path = season_dir / f"{base_name}.{sub_lang}.{sub_ext}"
-                if not sub_path.exists():
-                    try:
-                        import requests
-                        res = requests.get(sub_url, timeout=10)
-                        if res.status_code == 200:
-                            sub_path.write_bytes(res.content)
-                            print(f"    {C.GREEN}?{C.RESET} Downloaded {sub_lang} subtitle")
-                            downloaded_any = True
-                    except Exception:
-                        pass
-            if not downloaded_any:
-                print(f"    {C.YELLOW}?{C.RESET} No new English subtitles found or downloaded.")
+            _download_subtitle(subs, save_path)
         else:
-            print(f"    {C.YELLOW}?{C.RESET} No subtitles available from this provider.")
+            print(f"    {C.YELLOW}⚠{C.RESET} No subtitles available from this provider.")
         return True
 
     if ep_data.get("thumbnail_url"):
@@ -740,34 +932,12 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
             time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
             print(f"    {C.GREEN}✔{C.RESET} Downloaded EP {ep_num} successfully in {time_str}.")
 
-            subs = winner.get("subtitles")
+            subs = winner.get("subtitles") or []
             if subs:
-                for sub in subs:
-                    sub_url = sub.get("file")
-                    if not sub_url:
-                        continue
-                    sub_lang = (sub.get("language") or sub.get("label", "en")).lower()
-                    if len(sub_lang) > 3:
-                        sub_lang = sub_lang[:3]
-                    if sub_lang not in ("en", "eng"):
-                        continue
-                    sub_ext = sub.get("format") or sub_url.split('.')[-1]
-                    if len(sub_ext) > 4:
-                        sub_ext = "vtt"
-                    sub_path = season_dir / f"{base_name}.{sub_lang}.{sub_ext}"
-                    if not sub_path.exists():
-                        try:
-                            import requests
-                            res = requests.get(sub_url, timeout=10)
-                            if res.status_code == 200:
-                                sub_path.write_bytes(res.content)
-                                print(f"    {C.GREEN}✔{C.RESET} Downloaded {sub_lang} subtitle")
-                        except Exception:
-                            pass
+                _download_subtitle(subs, save_path)
             return True
-        return True
 
-    print(f"    {C.RED}?{C.RESET} Winner failed. Trying remaining servers...")
+    print(f"    {C.RED}✘{C.RESET} Winner failed (no audio). Trying remaining servers...")
     remaining = [(u, h, s, subs) for u, h, s, subs in all_streams if u != winner["m3u8_url"]]
 
     for m3u8_url, req_headers, server_name, subs in remaining:
@@ -793,35 +963,14 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
                 elapsed = t1_fb - t0_fb
                 time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
                 print(f"    {C.GREEN}✔{C.RESET} Downloaded EP {ep_num} successfully in {time_str}.")
-                
-                if subs:
-                    for sub in subs:
-                        sub_url = sub.get("file")
-                        if not sub_url:
-                            continue
-                        sub_lang = (sub.get("language") or sub.get("label", "en")).lower()
-                        if len(sub_lang) > 3:
-                            sub_lang = sub_lang[:3]
-                        if sub_lang not in ("en", "eng"):
-                            continue
-                        sub_ext = sub.get("format") or sub_url.split('.')[-1]
-                        if len(sub_ext) > 4:
-                            sub_ext = "vtt"
-                        sub_path = season_dir / f"{base_name}.{sub_lang}.{sub_ext}"
-                        if not sub_path.exists():
-                            try:
-                                import requests
-                                res = requests.get(sub_url, timeout=10)
-                                if res.status_code == 200:
-                                    sub_path.write_bytes(res.content)
-                                    print(f"    {C.GREEN}✔{C.RESET} Downloaded {sub_lang} subtitle")
-                            except Exception:
-                                pass
+
+                # Use global_subs (same across all streams) for subtitle download
+                global_subs = winner.get("subtitles") or subs
+                if global_subs:
+                    _download_subtitle(global_subs, save_path)
                 return True
         if not success:
             print(f"    {C.RED}✘{C.RESET} {server_name} failed. Trying next...")
-            return True
-        print(f"    {C.RED}?{C.RESET} {server_name} failed. Trying next...")
 
     print(f"    {C.RED}?{C.RESET} All servers exhausted for EP {ep_num}.")
     return False
@@ -873,24 +1022,32 @@ def process_series(anilist_id, target_eps=None, provider="hop", category="dub", 
             continue
             
         needs_download = False
-        if category == "dub" and ep_num > dub_count and not target_eps:
-            continue
-        if category == "sub" and ep_num > sub_count and not target_eps:
-            continue
+        if not target_eps:
+            # Mirror probe_worker_auto: for dub, allow if sub OR dub is out
+            if category == "dub":
+                available = max(dub_count, sub_count)
+            else:
+                available = sub_count
+            if ep_num > available:
+                continue
 
         if force or subtitles_only or ep_num not in downloaded_eps:
             needs_download = True
-        elif upgrade_dubs and category == "dub":
+        elif upgrade_dubs and category == "dub" and ep_num <= dub_count:
             sub_file = season_dir / f"{safe_title} - S{season_num:02d}E{int(ep_num):02d}.mp4"
             dub_file = season_dir / f"{safe_title} - S{season_num:02d}E{int(ep_num):02d} - Dub.mp4"
             if sub_file.exists() and not dub_file.exists():
                 needs_download = True
-                print(f"  {C.BLUE}?{C.RESET} Dub Upgrade found for EP {ep_num}!")
+                print(f"  {C.BLUE}↑{C.RESET} Dub Upgrade found for EP {ep_num}!")
 
         if needs_download:
             ep_copy = ep.copy()
             ep_copy["_miruro_id"] = miruro_id
-            ep_copy["_target_category"] = category
+            # If no dub track exists at all, go straight to sub
+            if category == "dub" and dub_count == 0:
+                ep_copy["_target_category"] = "sub"
+            else:
+                ep_copy["_target_category"] = category
             eps_to_dl.append(ep_copy)
         
     if not eps_to_dl:
@@ -962,16 +1119,23 @@ def probe_worker_auto(s, provider, category, quality, upgrade_dubs):
     for ep in eps:
         ep_num = ep["episode_number"]
         
-        # DO NOT queue unaired or non-existent episodes!
-        if category == "dub" and ep_num > dub_count:
-            continue
-        if category == "sub" and ep_num > sub_count:
+        # Gate on actual released counts from the metadata endpoint (/api/v1/anime/{uuid}).
+        # When category is "dub", use max(dub_count, sub_count) so that episodes where
+        # sub is out but dub hasn't aired yet still enter the queue and trigger sub-fallback.
+        if category == "dub":
+            available = max(dub_count, sub_count)
+        else:
+            available = sub_count
+        if ep_num > available:
             continue
             
         needs_download = False
         if ep_num not in downloaded_eps:
             needs_download = True
-        elif upgrade_dubs and category == "dub":
+        elif upgrade_dubs and category == "dub" and ep_num <= dub_count:
+            # Only attempt a dub upgrade if the dub has actually been released (ep_num <= dub_count).
+            # Without this guard, we'd try to upgrade every sub-only episode, fail to find a dub,
+            # then find the sub already on disk and skip — wasted API calls for every episode.
             sub_file = season_dir / f"{safe_title} - S{season_num:02d}E{int(ep_num):02d}.mp4"
             dub_file = season_dir / f"{safe_title} - S{season_num:02d}E{int(ep_num):02d} - Dub.mp4"
             if sub_file.exists() and not dub_file.exists():
@@ -981,9 +1145,20 @@ def probe_worker_auto(s, provider, category, quality, upgrade_dubs):
         if needs_download:
             ep_copy = ep.copy()
             ep_copy["_miruro_id"] = miruro_id
-            ep_copy["_target_category"] = category
+            # If we want dubs but no dub track exists yet for this show at all,
+            # go straight to sub — skip the failed dub probe entirely.
+            if category == "dub" and dub_count == 0:
+                ep_copy["_target_category"] = "sub"
+            else:
+                ep_copy["_target_category"] = category
             eps_to_dl.append(ep_copy)
             
+    # actual_released = what the metadata endpoint reports as available for this category
+    if category == "dub":
+        actual_released = max(dub_count, sub_count)
+    else:
+        actual_released = sub_count
+
     return {
         "anime_id": anilist_id, 
         "title": title, 
@@ -992,7 +1167,7 @@ def probe_worker_auto(s, provider, category, quality, upgrade_dubs):
         "provider": provider,
         "category": category,
         "quality": quality,
-        "total_released": len(eps),
+        "total_released": actual_released,
         "priority": s.get("priority", 0)
     }
 
@@ -1071,20 +1246,138 @@ def main():
     parser.add_argument("--retry-failed", action="store_true", help="Retry all previously failed episode downloads")
     parser.add_argument("--upgrade-dubs", action="store_true", help="Check for dubs of previously downloaded sub episodes and replace them")
     parser.add_argument("--subtitles-only", action="store_true", help="Only download subtitle files (VTT/ASS), skip video streams")
+    parser.add_argument("--test-subs", nargs=2, metavar=("MIRURO_UUID", "EP_NUM"), help="Debug: probe and download subtitle for one episode without downloading video. e.g. --test-subs EHT-j9hg7K6M__5XDixVgMh9rKe6Nwcz 1")
     parser.add_argument("--dry-run", action="store_true", help="Probe and show what would be downloaded without actually downloading")
     parser.add_argument("--debug", action="store_true", help="Enable verbose tracing for HTTP requests")
     args = parser.parse_args()
+
+    VERSION = "1.3.4"
+    print(f"{C.BLUE}◆{C.RESET} {C.BOLD}Miruro CLI{C.RESET} {C.GRAY}v{VERSION}{C.RESET}")
 
     if args.debug:
         cfg.debug = True
         print(f"  {C.YELLOW}[*]{C.RESET} Verbose debug logging enabled.")
 
-    try:
-        start_api_if_needed()
-    except Exception as e:
-        print(f"✘ {e}")
-        import sys
-        sys.exit(1)
+    if args.test_subs:
+        raw_id, ep_num_str = args.test_subs
+        # Episode number must be an integer in the API path (not 1.0)
+        ep_num = int(float(ep_num_str))
+
+        # Auto-resolve: if it looks like an AniList ID (pure digits), look up the Miruro UUID
+        if raw_id.isdigit():
+            print(f"  {C.BLUE}↻{C.RESET} Resolving AniList ID {raw_id} → Miruro UUID...")
+            _get_cf_cookie()
+            meta = fetch_miruro_metadata(int(raw_id))
+            if not meta:
+                print(f"  {C.RED}✘{C.RESET} Could not resolve AniList ID {raw_id}.")
+                return
+            miruro_uuid = meta["id"]
+            print(f"  {C.GREEN}✔{C.RESET} Resolved: {miruro_uuid}")
+        else:
+            miruro_uuid = raw_id
+            _get_cf_cookie()
+
+        play_path = f"anime/{miruro_uuid}/episodes/{ep_num}/play"
+        print(f"\n{C.BLUE}◆{C.RESET} Probing: /{play_path}")
+        data = api_v1_request(play_path)
+        if not data or "tracks" not in data:
+            print(f"  {C.RED}✘{C.RESET} No play data returned. Try --debug for details.")
+            return
+        # List all sub entries found
+        found = 0
+        all_eng_subs = []
+        for track in data.get("tracks", []):
+            if track.get("track") != "ssub":
+                continue
+            for prov in track.get("providers", []):
+                prov_name = prov.get("provider", "unknown")
+                for sub in prov.get("subtitles", []):
+                    lang = (sub.get("language") or sub.get("label", "?")).lower()[:3]
+                    url = sub.get("file", "")
+                    fmt = sub.get("format", "?")
+                    is_eng = lang in ("en", "eng") or (sub.get("label") or "").lower().startswith("eng")
+                    marker = f"{C.GREEN}●{C.RESET}" if is_eng else f"{C.GRAY}○{C.RESET}"
+                    print(f"  {marker} [{prov_name}] {lang}.{fmt}  {url[:75]}")
+                    found += 1
+                    if is_eng:
+                        tagged = dict(sub)
+                        tagged["_prov"] = prov_name
+                        all_eng_subs.append(tagged)
+        if not found:
+            print(f"  {C.YELLOW}⚠{C.RESET} No subtitle tracks found in ssub.")
+            return
+        if not all_eng_subs:
+            print(f"  {C.YELLOW}⚠{C.RESET} No English subtitles found.")
+            return
+
+        # Output dir: script root / temp_files/
+        import requests as _req
+        out_dir = Path(__file__).parent / "temp_files"
+        out_dir.mkdir(exist_ok=True)
+
+        print(f"\n{C.BLUE}◆{C.RESET} Testing all {len(all_eng_subs)} English subtitle source(s)...")
+        print(f"  Output dir: {out_dir}\n")
+
+        _CDN_REFERERS_TEST = {
+            "keeply.top":            ("https://strm.cx/",           "https://strm.cx"),
+            "strm.cx":               ("https://strm.cx/",           "https://strm.cx"),
+            "eclipseharbor.world":   ("https://megaplay.buzz/",     "https://megaplay.buzz"),
+            "broforgotsave.online":  ("https://megaplay.buzz/",     "https://megaplay.buzz"),
+            "krussdomi.com":         ("https://krussdomi.com/",     "https://krussdomi.com"),
+            "animepahe":             ("https://animepahe.ru/",      "https://animepahe.ru"),
+            "aniwaves":              ("https://aniwaves.me/",       "https://aniwaves.me"),
+        }
+        def _ref(url):
+            for k, v in _CDN_REFERERS_TEST.items():
+                if k in url.lower():
+                    return v
+            return (f"https://{_MIRURO_DOMAIN}/", f"https://{_MIRURO_DOMAIN}")
+
+        results = []
+        for i, sub in enumerate(all_eng_subs, 1):
+            sub_url = sub.get("file", "")
+            prov_name = sub.get("_prov", "?")
+            fmt = sub.get("format", "vtt")
+            if len(fmt) > 4: fmt = "vtt"
+            out_path = out_dir / f"test_ep{ep_num}_src{i}_{prov_name}.{fmt}"
+
+            referer, origin = _ref(sub_url)
+            hdrs = {
+                "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) "
+                               "Gecko/20100101 Firefox/133.0"),
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": referer,
+                "Origin": origin,
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "cross-site",
+                "DNT": "1",
+            }
+            print(f"  [{i}/{len(all_eng_subs)}] {prov_name}  {sub_url[:65]}...")
+            try:
+                resp = _req.get(sub_url, headers=hdrs, timeout=20, allow_redirects=True)
+                if resp.status_code == 200 and resp.content:
+                    out_path.write_bytes(resp.content)
+                    kb = len(resp.content) // 1024
+                    results.append((True, prov_name, sub_url, f"{kb} KB → {out_path.name}"))
+                    print(f"    {C.GREEN}✔{C.RESET} {resp.status_code} — {kb} KB saved → {out_path.name}")
+                else:
+                    results.append((False, prov_name, sub_url, f"HTTP {resp.status_code}"))
+                    print(f"    {C.RED}✘{C.RESET} HTTP {resp.status_code}")
+            except Exception as e:
+                results.append((False, prov_name, sub_url, str(e)))
+                print(f"    {C.RED}✘{C.RESET} Error: {e}")
+
+        # Summary
+        passed = [r for r in results if r[0]]
+        failed = [r for r in results if not r[0]]
+        print(f"\n{C.BLUE}━━ Subtitle Test Results ━━{C.RESET}")
+        print(f"  {C.GREEN}✔ Passed: {len(passed)}{C.RESET}  {C.RED}✘ Failed: {len(failed)}{C.RESET}\n")
+        for ok, prov, url, msg in results:
+            sym = f"{C.GREEN}✔{C.RESET}" if ok else f"{C.RED}✘{C.RESET}"
+            print(f"  {sym} [{prov}] {msg}")
+        return
 
     if args.list_tracked:
         tracked = db.get_tracked_series()
@@ -1365,12 +1658,22 @@ def main():
                         "created_at": ep.get("aired_on")
                     })
                 else:
-                    total_failed += 1
-                    db.record_failed_download(
-                        t['anime_id'], ep_num,
-                        category=ep.get("_target_category", t['category']),
-                        error="All servers failed probe or no streams found"
-                    )
+                    # Distinguish true failures from "sub already on disk" skips
+                    # by checking if the sub file exists on disk
+                    safe_title_t = sanitize_filename(t['title'])
+                    season_num_t = extract_season_number(t['title'])
+                    season_dir_t = get_jellyfin_dir(t['title'], t['anime_id']) / f"Season {season_num_t:02d}"
+                    sub_file_t = season_dir_t / f"{safe_title_t} - S{season_num_t:02d}E{int(ep_num):02d}.mp4"
+                    dub_file_t = season_dir_t / f"{safe_title_t} - S{season_num_t:02d}E{int(ep_num):02d} - Dub.mp4"
+                    if sub_file_t.exists() and not dub_file_t.exists():
+                        total_skipped += 1
+                    else:
+                        total_failed += 1
+                        db.record_failed_download(
+                            t['anime_id'], ep_num,
+                            category=ep.get("_target_category", t['category']),
+                            error="All servers failed probe or no streams found"
+                        )
 
         elapsed_total = time.monotonic() - t0
         mins = int(elapsed_total // 60)
