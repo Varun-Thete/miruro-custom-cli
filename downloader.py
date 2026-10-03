@@ -1095,8 +1095,15 @@ def probe_worker_auto(s, provider, category, quality, upgrade_dubs):
         return {"anime_id": anilist_id, "title": title, "eps_to_dl": [], "error": "Could not map ID"}
         
     miruro_id = meta["id"]
-    dub_count = meta.get("episode_counts", {}).get("dub") or 0
-    sub_count = meta.get("episode_counts", {}).get("sub") or 0
+    counts = meta.get("episode_counts", {})
+    raw_count = counts.get("raw") or 0
+    dub_count = counts.get("dub") or 0
+    sub_count = counts.get("sub") or 0
+    
+    # If Miruro hasn't indexed the sub/dub counts yet but raw episodes exist, 
+    # fall back to the raw count so we don't gate off newly aired episodes.
+    if sub_count == 0 and raw_count > 0:
+        sub_count = raw_count
         
     eps = fetch_v1_episodes(miruro_id)
     if not eps:
