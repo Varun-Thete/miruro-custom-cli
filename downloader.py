@@ -180,7 +180,7 @@ def get_jellyfin_dir(title, anilist_id):
 def download_image(url, dest_path, force=False):
     pass
 
-def fetch_and_add_series(anilist_id, force=False, miruro_uuid=None):
+def fetch_and_add_series(anilist_id, force=False, miruro_uuid=None, priority=None):
     anime = None
     if miruro_uuid:
         # If we already have the UUID, hit the direct endpoint to bypass search indexing delays
@@ -203,6 +203,14 @@ def fetch_and_add_series(anilist_id, force=False, miruro_uuid=None):
     title_obj = anime.get("title") or {}
     title = title_obj.get("english") or title_obj.get("romaji") or f"Unknown Title (ID {anilist_id})"
     miruro_uuid = anime.get("id") or str(anilist_id)
+    
+    existing = db.get_series(anilist_id)
+    if priority is not None:
+        final_priority = priority
+    elif existing and "priority" in existing:
+        final_priority = existing["priority"]
+    else:
+        final_priority = cfg.default_priority
 
     entry = {
         "anime_id": anilist_id,
@@ -216,7 +224,7 @@ def fetch_and_add_series(anilist_id, force=False, miruro_uuid=None):
         "total_episodes": anime.get("episode_count"),
         "genres": anime.get("genres", []),
         "is_tracked": 1,
-        "priority": cfg.default_priority
+        "priority": final_priority
     }
     db.upsert_series(entry)
     print(f"{C.GREEN}✔{C.RESET} Added to tracking: {title} (ID: {anilist_id})")
@@ -1251,9 +1259,10 @@ def main():
     parser.add_argument("--test-subs", nargs=2, metavar=("MIRURO_UUID", "EP_NUM"), help="Debug: probe and download subtitle for one episode without downloading video. e.g. --test-subs EHT-j9hg7K6M__5XDixVgMh9rKe6Nwcz 1")
     parser.add_argument("--dry-run", action="store_true", help="Probe and show what would be downloaded without actually downloading")
     parser.add_argument("--debug", action="store_true", help="Enable verbose tracing for HTTP requests")
+    parser.add_argument("--priority", type=int, default=None, help="Set priority for the tracked series (higher number = downloaded first during --auto)")
     args = parser.parse_args()
 
-    VERSION = "1.3.6"
+    VERSION = "1.3.7"
     print(f"{C.BLUE}◆{C.RESET} {C.BOLD}Miruro CLI{C.RESET} {C.GRAY}v{VERSION}{C.RESET}")
 
     if args.debug:
@@ -1427,7 +1436,7 @@ def main():
             try:
                 anilist_id, m_uuid = resolve_input(query)
                 if anilist_id:
-                    fetch_and_add_series(anilist_id, force=True, miruro_uuid=m_uuid)
+                    fetch_and_add_series(anilist_id, force=True, miruro_uuid=m_uuid, priority=args.priority)
                 else:
                     print(f"  {C.RED}✘{C.RESET} Invalid ID or URL format: {query}")
             except Exception as e:
