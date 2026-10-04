@@ -1,4 +1,4 @@
-﻿# Title: Miruro Series Manager Server
+# Title: Miruro Series Manager Server
 # Creator: Vernox
 # Description: FastAPI web server to manage tracked series (priority, add/remove, episode counts) and run downloader jobs with live SSE log streaming.
 
@@ -119,6 +119,7 @@ class JobManager:
         return "info"
 
     def _pump(self, job: Job):
+        prog_re = re.compile(r"^(?:\[.*?\]\s*)?Downloading\s+\[(.*?)\]:")
         try:
             assert job.proc and job.proc.stdout
             for raw in job.proc.stdout:
@@ -126,7 +127,14 @@ class JobManager:
                 if not text.strip():
                     continue
                 entry = {"t": time.time(), "text": text, "level": self._classify(text)}
-                job.lines.append(entry)
+                
+                # Collapse sequential progress bars in history
+                m = prog_re.match(text)
+                if m and job.lines and prog_re.match(job.lines[-1]["text"]) and f"[{m.group(1)}]:" in job.lines[-1]["text"]:
+                    job.lines[-1] = entry
+                else:
+                    job.lines.append(entry)
+                    
                 bus.publish("log", {"job_id": job.id, **entry})
         except Exception as e:  # never let the pump thread die silently
             bus.publish("log", {"job_id": job.id, "t": time.time(),

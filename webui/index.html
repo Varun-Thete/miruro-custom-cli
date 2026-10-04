@@ -308,8 +308,13 @@ function renderJobs() {
   });
 }
 function appendLine(l) {
-  const d = el('div', {class: l.level}, l.text);
   const log = $('#log'); const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+  const m = l.text.match(/^(?:\[.*?\]\s*)?Downloading\s+\[(.*?)\]:/);
+  if (m && log.lastElementChild && log.lastElementChild.textContent.includes(`Downloading [${m[1]}]:`)) {
+    log.lastElementChild.textContent = l.text;
+    return;
+  }
+  const d = el('div', {class: l.level}, l.text);
   log.append(d); while (log.childElementCount > 1500) log.firstChild.remove();
   if (stick) log.scrollTop = log.scrollHeight;
 }
