@@ -457,7 +457,7 @@ async def unhandled(_: Request, exc: Exception):
 
 def main():
     ap = argparse.ArgumentParser(description="Miruro Series Manager web UI")
-    ap.add_argument("--host", default="127.0.0.1", help="Bind address (default: loopback only)")
+    ap.add_argument("--host", default="0.0.0.0", help="Bind address (default: all interfaces, reachable on your LAN; use 127.0.0.1 for local only)")
     ap.add_argument("--port", type=int, default=5300)
     args = ap.parse_args()
     if args.host not in ("127.0.0.1", "localhost", "::1") and not API_TOKEN:

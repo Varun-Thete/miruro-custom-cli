@@ -87,11 +87,11 @@ python downloader.py --auto -q 1080
 ### 5. Web Manager (Dashboard)
 A modern web UI to manage your tracked series: poster grid, priority stepper, add/untrack/delete, fix episode counts, trigger downloads / auto-scan, and a **live console** streaming job output over Server-Sent Events.
 ```bash
-python manager_server.py                 # http://127.0.0.1:5300
-python manager_server.py --host 0.0.0.0  # expose on LAN (set a token first!)
+python manager_server.py                 # all interfaces: http://<server-ip>:5300
+python manager_server.py --host 127.0.0.1  # local machine only
 MIRURO_UI_TOKEN=secret python manager_server.py --host 0.0.0.0   # then open /?token=secret
 ```
-*Binds to loopback by default; set `MIRURO_UI_TOKEN` before exposing it to a network.*
+*Listens on all interfaces by default so it is reachable on your local network (the startup banner prints the exact URL). Set `MIRURO_UI_TOKEN` to require a token, or use `--host 127.0.0.1` to restrict it to this machine.*
 
 ## ðŸ›  Advanced Features
 
