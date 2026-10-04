@@ -84,6 +84,15 @@ python downloader.py --auto -q 1080
   python downloader.py --add 163142 --priority 50
   ```
 
+### 5. Web Manager (Dashboard)
+A modern web UI to manage your tracked series: poster grid, priority stepper, add/untrack/delete, fix episode counts, trigger downloads / auto-scan, and a **live console** streaming job output over Server-Sent Events.
+```bash
+python manager_server.py                 # http://127.0.0.1:8787
+python manager_server.py --host 0.0.0.0  # expose on LAN (set a token first!)
+MIRURO_UI_TOKEN=secret python manager_server.py --host 0.0.0.0   # then open /?token=secret
+```
+*Binds to loopback by default; set `MIRURO_UI_TOKEN` before exposing it to a network.*
+
 ## 🛠 Advanced Features
 
 ### Smart Stream Resolution Filtering

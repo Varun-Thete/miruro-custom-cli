@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<!-- Title: Miruro Series Manager UI -->
+<!-- Creator: Vernox -->
+<!-- Description: Single-page modern dashboard for managing tracked series with live job logs via SSE. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Miruro Manager</title>
+<style>
+:root{
+  --bg:#0b0d14; --panel:rgba(255,255,255,.04); --panel-2:rgba(255,255,255,.07);
+  --border:rgba(255,255,255,.09); --text:#e8eaf2; --muted:#8b90a5;
+  --accent:#7c5cff; --accent-2:#22d3ee; --ok:#34d399; --warn:#fbbf24; --err:#f87171;
+  --radius:16px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Inter,system-ui,Segoe UI,Roboto,sans-serif}
+body{background:
+  radial-gradient(900px 500px at 10% -10%,rgba(124,92,255,.22),transparent 60%),
+  radial-gradient(800px 500px at 100% 0%,rgba(34,211,238,.14),transparent 60%),var(--bg);
+  min-height:100vh;padding-bottom:70px}
+button,input,select{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:20;backdrop-filter:blur(16px);background:rgba(11,13,20,.7);
+  border-bottom:1px solid var(--border);padding:14px 28px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.brand{font-weight:700;font-size:18px;letter-spacing:.3px;display:flex;align-items:center;gap:10px}
+.brand i{width:12px;height:12px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2));box-shadow:0 0 14px var(--accent)}
+.live{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--err)}
+.dot.on{background:var(--ok);box-shadow:0 0 10px var(--ok)}
+main{max-width:1500px;margin:0 auto;padding:24px 28px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:22px}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
+.stat b{display:block;font-size:26px;font-weight:700}
+.stat span{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.8px}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;align-items:center}
+.toolbar input[type=search]{flex:1;min-width:220px}
+input,select{background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;outline:none}
+input:focus,select:focus{border-color:var(--accent)}
+select option{background:#14172a}
+.btn{background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:9px 14px;cursor:pointer;transition:.15s}
+.btn:hover{background:rgba(255,255,255,.12);transform:translateY(-1px)}
+.btn.primary{background:linear-gradient(135deg,var(--accent),#5b8cff);border-color:transparent;font-weight:600}
+.btn.danger:hover{background:rgba(248,113,113,.2);border-color:var(--err)}
+.btn.sm{padding:5px 9px;font-size:12px;border-radius:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:18px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;
+  display:flex;flex-direction:column;transition:.2s;position:relative}
+.card:hover{transform:translateY(-4px);border-color:rgba(124,92,255,.5);box-shadow:0 14px 40px rgba(0,0,0,.45)}
+.poster{aspect-ratio:2/3;background:#151826 center/cover no-repeat;position:relative}
+.poster::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(11,13,20,.95) 0%,transparent 55%)}
+.badges{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;z-index:2}
+.badge{padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600;background:rgba(0,0,0,.6);backdrop-filter:blur(6px);border:1px solid var(--border)}
+.badge.prio{color:var(--accent-2)} .badge.fail{color:var(--err);border-color:var(--err)}
+.badge.st-RELEASING{color:var(--ok)} .badge.st-FINISHED{color:var(--muted)}
+.title{position:absolute;bottom:12px;left:14px;right:14px;z-index:2;font-weight:600;font-size:15px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.body{padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
+.prog{height:6px;border-radius:99px;background:var(--panel-2);overflow:hidden}
+.prog>div{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .4s}
+.meta{display:flex;justify-content:space-between;color:var(--muted);font-size:12px}
+.row{display:flex;gap:6px;flex-wrap:wrap}
+.stepper{display:flex;align-items:center;gap:4px;margin-left:auto}
+.stepper input{width:58px;text-align:center;padding:4px 6px}
+.card.untracked{opacity:.55}
+.empty{grid-column:1/-1;text-align:center;color:var(--muted);padding:80px 0}
+/* Modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:50}
+.modal-bg.open{display:flex}
+.modal{background:#12152a;border:1px solid var(--border);border-radius:20px;padding:24px;width:min(520px,92vw);max-height:88vh;overflow:auto}
+.modal h3{margin:0 0 14px}
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.field label{color:var(--muted);font-size:12px}
+.field input{width:100%}
+.actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+.synopsis{color:var(--muted);max-height:120px;overflow:auto;margin:8px 0 14px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.chip{background:var(--panel-2);padding:2px 9px;border-radius:99px;font-size:11px}
+/* Console drawer */
+#console{position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(8,10,18,.96);border-top:1px solid var(--border);
+  backdrop-filter:blur(14px);height:46px;transition:height .25s;display:flex;flex-direction:column}
+#console.open{height:44vh}
+.c-head{display:flex;align-items:center;gap:12px;padding:0 20px;min-height:46px;cursor:pointer;user-select:none}
+.c-head .jobs{display:flex;gap:6px;overflow:auto;flex:1}
+.jobchip{padding:3px 10px;border-radius:99px;font-size:12px;background:var(--panel-2);border:1px solid var(--border);cursor:pointer;white-space:nowrap}
+.jobchip.sel{border-color:var(--accent)}
+.jobchip.running::before{content:"● ";color:var(--accent-2);animation:pulse 1s infinite}
+.jobchip.done::before{content:"✔ ";color:var(--ok)} .jobchip.failed::before{content:"✘ ";color:var(--err)}
+.jobchip.cancelled::before{content:"■ ";color:var(--warn)}
+@keyframes pulse{50%{opacity:.2}}
+#log{flex:1;overflow:auto;padding:10px 20px;font:12px/1.55 ui-monospace,Consolas,monospace}
+#log div.ok{color:var(--ok)} #log div.warn{color:var(--warn)} #log div.error{color:var(--err)} #log div.info{color:#b9bfd6}
+/* Toasts */
+#toasts{position:fixed;right:20px;top:76px;display:flex;flex-direction:column;gap:8px;z-index:60}
+.toast{background:#171a30;border:1px solid var(--border);border-left:3px solid var(--accent);padding:10px 14px;border-radius:10px;
+  animation:in .25s;max-width:340px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+.toast.err{border-left-color:var(--err)} .toast.ok{border-left-color:var(--ok)}
+@keyframes in{from{transform:translateX(30px);opacity:0}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><i></i>Miruro Manager</div>
+  <button class="btn primary" id="btnAdd">＋ Add series</button>
+  <button class="btn" id="btnAuto">▶ Run auto-scan</button>
+  <button class="btn" id="btnDry">🔍 Dry run</button>
+  <button class="btn" id="btnRetry">↻ Retry failed</button>
+  <div class="live"><span class="dot" id="dot"></span><span id="liveTxt">connecting…</span></div>
+</header>
+
+<main>
+  <section class="stats" id="stats"></section>
+  <div class="toolbar">
+    <input type="search" id="q" placeholder="Search title or AniList ID…">
+    <select id="scope">
+      <option value="tracked">Tracked</option><option value="untracked">Untracked</option><option value="all">All</option>
+    </select>
+    <select id="sort">
+      <option value="priority">Sort: Priority</option><option value="title">Sort: Title</option>
+      <option value="progress">Sort: Progress</option><option value="failed">Sort: Failures</option>
+    </select>
+    <select id="statusFilter">
+      <option value="">Any status</option><option value="RELEASING">Releasing</option><option value="FINISHED">Finished</option>
+    </select>
+  </div>
+  <div class="grid" id="grid"></div>
+</main>
+
+<div class="modal-bg" id="mAdd"><div class="modal">
+  <h3>Add series</h3>
+  <div class="field"><label>AniList ID, Miruro UUID or miruro.bz watch URL</label>
+    <input id="addQ" placeholder="https://www.miruro.bz/watch/…"></div>
+  <div class="field"><label>Priority (higher downloads first)</label><input id="addP" type="number" value="0"></div>
+  <div class="actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="addGo">Add</button></div>
+</div></div>
+
+<div class="modal-bg" id="mDetail"><div class="modal" id="detail"></div></div>
+
+<div id="toasts"></div>
+
+<div id="console">
+  <div class="c-head" id="cHead"><b>Console</b><div class="jobs" id="jobChips"></div><span id="cArrow">▲</span></div>
+  <div id="log"></div>
+</div>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const $ = (s, r=document) => r.querySelector(s);
+const state = {series: [], jobs: new Map(), selJob: null, logs: new Map()};
+
+async function api(path, opts={}) {
+  const headers = {'Content-Type': 'application/json'};
+  if (TOKEN) headers['X-Token'] = TOKEN;
+  const res = await fetch('/api' + path, {...opts, headers});
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).detail || msg; } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+function toast(msg, kind='') {
+  const t = document.createElement('div');
+  t.className = 'toast ' + kind; t.textContent = msg;
+  $('#toasts').appendChild(t); setTimeout(() => t.remove(), 4500);
+}
+const guard = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, 'err'); } };
+function el(tag, props={}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') e.className = v;
+    else if (k === 'style') e.style.cssText = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  kids.flat().forEach(c => e.append(c instanceof Node ? c : document.createTextNode(c)));
+  return e;
+}
+
+/* ---------- data ---------- */
+async function loadSeries() {
+  state.series = await api('/series?scope=' + $('#scope').value);
+  render();
+}
+async function loadStats() {
+  const s = await api('/stats');
+  const box = $('#stats'); box.replaceChildren();
+  [['Tracked', s.tracked], ['Total in DB', s.total_series], ['Episodes downloaded', s.episodes_downloaded],
+   ['Failed', s.failed], ['Running jobs', s.running_jobs]].forEach(([k, v]) =>
+    box.append(el('div', {class: 'stat'}, el('b', {}, String(v)), el('span', {}, k))));
+}
+const refresh = guard(async () => { await Promise.all([loadSeries(), loadStats()]); });
+let rt; const refreshSoon = () => { clearTimeout(rt); rt = setTimeout(refresh, 250); };
+
+/* ---------- render ---------- */
+function visible() {
+  const q = $('#q').value.trim().toLowerCase(), st = $('#statusFilter').value;
+  let r = state.series.filter(s => (!q || (s.title||'').toLowerCase().includes(q) || String(s.anime_id).includes(q))
+    && (!st || s.status === st));
+  const by = $('#sort').value;
+  const prog = s => s.last_episode_aired ? s.downloaded_count / s.last_episode_aired : 0;
+  r.sort((a, b) => by === 'title' ? (a.title||'').localeCompare(b.title||'')
+    : by === 'progress' ? prog(a) - prog(b)
+    : by === 'failed' ? b.failed_count - a.failed_count
+    : b.priority - a.priority || (a.title||'').localeCompare(b.title||''));
+  return r;
+}
+function cardFor(s) {
+  const total = s.total_episodes || s.last_episode_aired || 0;
+  const pct = total ? Math.min(100, Math.round(100 * s.downloaded_count / total)) : 0;
+  const poster = el('div', {class: 'poster'});
+  if (s.poster) poster.style.backgroundImage = `url("${encodeURI(s.poster)}")`;
+  poster.append(
+    el('div', {class: 'badges'},
+      el('span', {class: 'badge prio'}, '★ ' + s.priority),
+      s.failed_count ? el('span', {class: 'badge fail'}, s.failed_count + ' failed') : el('span', {class: 'badge st-' + s.status}, s.status || '')),
+    el('div', {class: 'title'}, s.title || ('ID ' + s.anime_id)));
+  poster.style.cursor = 'pointer'; poster.onclick = () => openDetail(s);
+  const prio = el('input', {type: 'number', value: s.priority, title: 'Priority'});
+  const setPrio = guard(async v => { await api('/series/' + s.anime_id, {method: 'PATCH', body: JSON.stringify({priority: v})}); toast('Priority → ' + v, 'ok'); });
+  prio.onchange = () => setPrio(parseInt(prio.value || '0', 10));
+  const bump = d => () => { prio.value = (parseInt(prio.value || '0', 10) + d); prio.onchange(); };
+  return el('div', {class: 'card' + (s.is_tracked ? '' : ' untracked')},
+    poster,
+    el('div', {class: 'body'},
+      el('div', {class: 'prog'}, el('div', {style: `width:${pct}%`})),
+      el('div', {class: 'meta'}, el('span', {}, `${s.downloaded_count}/${total || '?'} downloaded`), el('span', {}, `aired ${s.last_episode_aired || 0}`)),
+      el('div', {class: 'row'},
+        el('button', {class: 'btn sm', onclick: guard(() => startDownload(s))}, '⬇ Download'),
+        el('div', {class: 'stepper'},
+          el('button', {class: 'btn sm', onclick: bump(-1)}, '−'), prio,
+          el('button', {class: 'btn sm', onclick: bump(1)}, '+')))));
+}
+function render() {
+  const g = $('#grid'); g.replaceChildren();
+  const r = visible();
+  if (!r.length) g.append(el('div', {class: 'empty'}, 'No series match. Add one with “＋ Add series”.'));
+  r.forEach(s => g.append(cardFor(s)));
+}
+
+/* ---------- actions ---------- */
+async function startDownload(s, opts={}) {
+  const j = await api(`/series/${s.anime_id}/download`, {method: 'POST', body: JSON.stringify(opts)});
+  toast('Started: ' + j.label); selectJob(j.id); openConsole(true);
+}
+function openDetail(s) {
+  const d = $('#detail'); d.replaceChildren();
+  const epsInput = el('input', {type: 'number', min: 0, value: s.downloaded_count, style: 'width:100px'});
+  const epExpr = el('input', {placeholder: 'e.g. 3-5,8', style: 'width:130px'});
+  const forceCk = el('input', {type: 'checkbox'});
+  d.append(
+    el('h3', {}, s.title || ('ID ' + s.anime_id)),
+    el('div', {class: 'chips'}, el('span', {class: 'chip'}, 'AniList ' + s.anime_id), el('span', {class: 'chip'}, s.status || '—'),
+      ...(s.genres || []).slice(0, 6).map(g => el('span', {class: 'chip'}, g))),
+    el('div', {class: 'synopsis'}, (s.synopsis || 'No synopsis.').replace(/<[^>]+>/g, '')),
+    el('div', {class: 'meta'}, el('span', {}, 'Last checked: ' + (s.last_checked_at || 'never')), el('span', {}, `Downloaded: ${s.downloaded_eps.join(', ') || 'none'}`.slice(0, 60))),
+    el('div', {class: 'field', style: 'margin-top:14px'}, el('label', {}, 'Mark episodes 1…N as downloaded (fix episode count)'),
+      el('div', {class: 'row'}, epsInput, el('button', {class: 'btn', onclick: guard(async () => {
+        await api(`/series/${s.anime_id}/downloaded`, {method: 'PUT', body: JSON.stringify({count: parseInt(epsInput.value || '0', 10)})});
+        toast('Episode count updated', 'ok');
+      })}, 'Save'))),
+    el('div', {class: 'field'}, el('label', {}, 'Download specific episodes'),
+      el('div', {class: 'row'}, epExpr, el('label', {}, forceCk, ' force'),
+        el('button', {class: 'btn', onclick: guard(async () => {
+          await startDownload(s, {episodes: epExpr.value.trim() || null, force: forceCk.checked}); closeModals();
+        })}, 'Download'))),
+    el('div', {class: 'actions', style: 'justify-content:space-between;flex-wrap:wrap'},
+      el('div', {class: 'row'},
+        el('button', {class: 'btn', onclick: guard(async () => { const j = await api(`/series/${s.anime_id}/refresh`, {method: 'POST'}); selectJob(j.id); openConsole(true); closeModals(); })}, '⟳ Refresh metadata'),
+        el('button', {class: 'btn', onclick: guard(async () => {
+          await api('/series/' + s.anime_id, {method: 'PATCH', body: JSON.stringify({is_tracked: !s.is_tracked})});
+          toast(s.is_tracked ? 'Untracked' : 'Tracking resumed'); closeModals();
+        })}, s.is_tracked ? '⏸ Untrack' : '▶ Re-track'),
+        el('button', {class: 'btn danger', onclick: guard(async () => {
+          if (!confirm('Permanently delete this series and its history from the DB?')) return;
+          await api('/series/' + s.anime_id + '?purge=true', {method: 'DELETE'}); toast('Deleted'); closeModals();
+        })}, '🗑 Delete')),
+      el('button', {class: 'btn', onclick: closeModals}, 'Close')));
+  $('#mDetail').classList.add('open');
+}
+function closeModals() { document.querySelectorAll('.modal-bg').forEach(m => m.classList.remove('open')); }
+document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', e => { if (e.target === m || e.target.hasAttribute('data-close')) closeModals(); }));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModals(); });
+
+$('#btnAdd').onclick = () => { $('#mAdd').classList.add('open'); $('#addQ').focus(); };
+$('#addGo').onclick = guard(async () => {
+  const query = $('#addQ').value.trim(); if (!query) return toast('Enter an ID or URL', 'err');
+  const priority = parseInt($('#addP').value || '0', 10);
+  const j = await api('/series', {method: 'POST', body: JSON.stringify({query, priority})});
+  $('#addQ').value = ''; closeModals(); selectJob(j.id); openConsole(true); toast('Adding…');
+});
+$('#addQ').addEventListener('keydown', e => { if (e.key === 'Enter') $('#addGo').click(); });
+const runJob = (path, msg) => guard(async () => { const j = await api(path, {method: 'POST'}); toast(msg); selectJob(j.id); openConsole(true); });
+$('#btnAuto').onclick = runJob('/auto', 'Auto-scan started');
+$('#btnDry').onclick = runJob('/auto?dry_run=true', 'Dry run started');
+$('#btnRetry').onclick = runJob('/retry-failed', 'Retrying failed downloads');
+['q', 'sort', 'statusFilter'].forEach(id => $('#' + id).addEventListener('input', render));
+$('#scope').onchange = refresh;
+
+/* ---------- console / jobs ---------- */
+function openConsole(force) { const c = $('#console'); c.classList.toggle('open', force ?? !c.classList.contains('open')); $('#cArrow').textContent = c.classList.contains('open') ? '▼' : '▲'; }
+$('#cHead').onclick = e => { if (!e.target.classList.contains('jobchip')) openConsole(); };
+function renderJobs() {
+  const box = $('#jobChips'); box.replaceChildren();
+  [...state.jobs.values()].sort((a, b) => b.started - a.started).slice(0, 12).forEach(j => {
+    const chip = el('span', {class: `jobchip ${j.status}${j.id === state.selJob ? ' sel' : ''}`, title: j.args.join(' '), onclick: () => { selectJob(j.id); openConsole(true); }}, j.label);
+    if (j.status === 'running') chip.append(el('button', {class: 'btn sm', style: 'margin-left:8px;padding:0 6px', onclick: ev => { ev.stopPropagation(); api('/jobs/' + j.id, {method: 'DELETE'}).catch(x => toast(x.message, 'err')); }}, '■'));
+    box.append(chip);
+  });
+}
+function appendLine(l) {
+  const d = el('div', {class: l.level}, l.text);
+  const log = $('#log'); const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+  log.append(d); while (log.childElementCount > 1500) log.firstChild.remove();
+  if (stick) log.scrollTop = log.scrollHeight;
+}
+async function selectJob(id) {
+  state.selJob = id; renderJobs(); $('#log').replaceChildren();
+  try { const j = await api('/jobs/' + id); j.lines.forEach(appendLine); } catch {}
+}
+
+/* ---------- live feed (SSE) ---------- */
+function connect() {
+  const es = new EventSource('/api/events' + (TOKEN ? '?token=' + encodeURIComponent(TOKEN) : ''));
+  const live = on => { $('#dot').classList.toggle('on', on); $('#liveTxt').textContent = on ? 'live' : 'reconnecting…'; };
+  es.addEventListener('hello', () => { live(true); refresh(); });
+  es.onerror = () => live(false);
+  es.addEventListener('log', e => { const d = JSON.parse(e.data); if (d.job_id === state.selJob) appendLine(d); });
+  es.addEventListener('job', e => {
+    const j = JSON.parse(e.data); const prev = state.jobs.get(j.id); state.jobs.set(j.id, j);
+    if (!state.selJob) state.selJob = j.id;
+    renderJobs();
+    if (prev && prev.status === 'running' && j.status !== 'running')
+      toast(`${j.label}: ${j.status}`, j.status === 'done' ? 'ok' : 'err');
+  });
+  es.addEventListener('series_changed', refreshSoon);
+}
+(async () => { try { (await api('/jobs')).forEach(j => state.jobs.set(j.id, j)); renderJobs(); } catch {} connect(); })();
+</script>
+</body>
+</html>
