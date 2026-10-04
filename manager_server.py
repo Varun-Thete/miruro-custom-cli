@@ -463,7 +463,19 @@ def main():
     if args.host not in ("127.0.0.1", "localhost", "::1") and not API_TOKEN:
         print("⚠ Binding to a non-loopback address WITHOUT MIRURO_UI_TOKEN set. "
               "Anyone on your network can control this server. Set MIRURO_UI_TOKEN to require a token.")
-    print(f"◆ Miruro Manager → http://{args.host}:{args.port}")
+    print(f"◆ Miruro Manager listening on {args.host}:{args.port}")
+    if args.host in ("0.0.0.0", "::"):
+        import socket
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("10.255.255.255", 1))  # no packets sent; just picks the outbound interface
+                lan_ip = s.getsockname()[0]
+        except OSError:
+            lan_ip = "<this-machine-ip>"
+        print(f"  → From this machine:   http://127.0.0.1:{args.port}")
+        print(f"  → From other devices:  http://{lan_ip}:{args.port}   (NOT http://0.0.0.0:{args.port})")
+    else:
+        print(f"  → http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
