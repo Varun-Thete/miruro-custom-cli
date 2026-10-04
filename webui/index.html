@@ -117,7 +117,7 @@ select option{background:#14172a}
     </select>
     <select id="sort">
       <option value="priority">Sort: Priority</option><option value="title">Sort: Title</option>
-      <option value="progress">Sort: Progress</option><option value="failed">Sort: Failures</option>
+      <option value="progress">Sort: Progress</option>
     </select>
     <select id="statusFilter">
       <option value="">Any status</option><option value="RELEASING">Releasing</option><option value="FINISHED">Finished</option>
@@ -186,7 +186,7 @@ async function loadStats() {
   const s = await api('/stats');
   const box = $('#stats'); box.replaceChildren();
   [['Tracked', s.tracked], ['Total in DB', s.total_series], ['Episodes downloaded', s.episodes_downloaded],
-   ['Failed', s.failed], ['Running jobs', s.running_jobs]].forEach(([k, v]) =>
+   ['Running jobs', s.running_jobs]].forEach(([k, v]) =>
     box.append(el('div', {class: 'stat'}, el('b', {}, String(v)), el('span', {}, k))));
 }
 const refresh = guard(async () => { await Promise.all([loadSeries(), loadStats()]); });
@@ -201,7 +201,6 @@ function visible() {
   const prog = s => s.last_episode_aired ? s.downloaded_count / s.last_episode_aired : 0;
   r.sort((a, b) => by === 'title' ? (a.title||'').localeCompare(b.title||'')
     : by === 'progress' ? prog(a) - prog(b)
-    : by === 'failed' ? b.failed_count - a.failed_count
     : b.priority - a.priority || (a.title||'').localeCompare(b.title||''));
   return r;
 }
@@ -213,7 +212,7 @@ function cardFor(s) {
   poster.append(
     el('div', {class: 'badges'},
       el('span', {class: 'badge prio'}, '★ ' + s.priority),
-      s.failed_count ? el('span', {class: 'badge fail'}, s.failed_count + ' failed') : el('span', {class: 'badge st-' + s.status}, s.status || '')),
+      el('span', {class: 'badge st-' + s.status}, s.status || '')),
     el('div', {class: 'title'}, s.title || ('ID ' + s.anime_id)));
   poster.style.cursor = 'pointer'; poster.onclick = () => openDetail(s);
   const prio = el('input', {type: 'number', value: s.priority, title: 'Priority'});
