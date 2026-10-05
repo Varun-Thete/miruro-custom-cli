@@ -541,9 +541,10 @@ def fetch_miruro_id(anilist_id: int) -> str | None:
 
 
 def fetch_v1_episodes(miruro_id: str) -> list | None:
-    data = api_v1_request(f"anime/{miruro_id}/episodes", {"kind": "regular", "limit": 10000})
+    data = api_v1_request(f"anime/{miruro_id}/episodes", {"limit": 10000})
     if data and "data" in data:
-        return data["data"]
+        # Filter for regular episodes client-side since API may reject kind=regular
+        return [ep for ep in data["data"] if ep.get("kind") == "regular"]
     return None
 
 
@@ -978,11 +979,11 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
     print(f"    {C.RED}?{C.RESET} All servers exhausted for EP {ep_num}.")
     return False
 
-def process_series(anilist_id, target_eps=None, provider="hop", category="dub", quality=1080, force=False, upgrade_dubs=False, subtitles_only=False):
+def process_series(anilist_id, target_eps=None, provider="hop", category="dub", quality=1080, force=False, upgrade_dubs=False, subtitles_only=False, miruro_uuid=None):
     series = db.get_series(anilist_id)
     if not series:
         print(f"{C.BLUE}?{C.RESET} Fetching metadata for new series (ID: {anilist_id})...")
-        title = fetch_and_add_series(anilist_id)
+        title = fetch_and_add_series(anilist_id, miruro_uuid=miruro_uuid)
         if not title:
             print(f"{C.RED}?{C.RESET} Could not add series {anilist_id}")
             return
@@ -1496,8 +1497,9 @@ def main():
         return
 
     manual_id = None
+    m_uuid = None
     if args.link:
-        manual_id, _ = resolve_input(args.link)
+        manual_id, m_uuid = resolve_input(args.link)
         if not manual_id:
             print(f"{C.RED}✘{C.RESET} Could not parse AniList ID from link or URL.")
             sys.exit(1)
@@ -1716,7 +1718,7 @@ def main():
             
     elif manual_id:
         target_eps = parse_episodes_arg(args.episodes)
-        process_series(manual_id, target_eps, args.provider, args.category, args.quality, upgrade_dubs=args.upgrade_dubs, subtitles_only=args.subtitles_only)
+        process_series(manual_id, target_eps, args.provider, args.category, args.quality, upgrade_dubs=args.upgrade_dubs, subtitles_only=args.subtitles_only, miruro_uuid=m_uuid)
     else:
         parser.print_help()
 
