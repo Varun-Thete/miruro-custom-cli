@@ -2,7 +2,7 @@
 
 An advanced, autonomous CLI tool for batch downloading anime streams from Miruro and its providers. Features automatic background tracking, Cloudflare bypass, multi-provider HLS chunk racing, database synchronization, and local media management.
 
-## âœ¨ Features
+## ✨ Features
 
 - **Automated Tracking (`--auto`)**: Add your favorite series and the CLI will periodically probe and seamlessly download newly aired episodes as they become available.
 - **Stealth Cloudflare Bypass**: Automatically spins up headless browser sessions to solve and cache Cloudflare challenges when the API blocks requests.
@@ -11,7 +11,7 @@ An advanced, autonomous CLI tool for batch downloading anime streams from Miruro
 - **Sub/Dub Hierarchy**: Prefer Dubs? The CLI searches for Dubs first and gracefully falls back to Subs if a Dub hasn't aired yet. Upgrade logic (`--upgrade-dubs`) allows swapping Subs with Dubs as they release.
 - **Local SQLite Database**: Persists your download history, tracks watched episodes, and prevents duplicate processing.
 
-## ðŸš€ Installation
+## 🚀 Installation
 
 ### Prerequisites
 - Python 3.10+
@@ -34,7 +34,7 @@ An advanced, autonomous CLI tool for batch downloading anime streams from Miruro
    pip install -r requirements.txt
    ```
 
-## ðŸ“š Usage
+## 📚 Usage
 
 ### 1. Add Series to Tracking
 Use the AniList ID, a raw Miruro UUID, or a direct Miruro watch/anime URL to add a series to your local database.
@@ -93,14 +93,14 @@ MIRURO_UI_TOKEN=secret python manager_server.py --host 0.0.0.0   # then open /?t
 ```
 *Listens on all interfaces by default so it is reachable on your local network (the startup banner prints the exact URL). Set `MIRURO_UI_TOKEN` to require a token, or use `--host 127.0.0.1` to restrict it to this machine.*
 
-## ðŸ›  Advanced Features
+## 🛠 Advanced Features
 
 ### Smart Stream Resolution Filtering
 Providers sometimes obscure video resolutions, labeling 720p streams identically to 1080p within their JSON endpoints. This CLI parses `.m3u8` master playlists, dynamically evaluates heights, and safely defaults to `0` (Unknown) for streams lacking metadata, ensuring you never accidentally downgrade quality while racing servers.
 
-## ðŸ¤ Contributing
+## 🤝 Contributing
 Contributions, issues, and feature requests are welcome!
 
-## ðŸ“ License
+## 📝 License
 This project is licensed under the MIT License.
 "# miruro-custom-cli" 
