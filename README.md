@@ -1,4 +1,4 @@
-﻿# Miruro Custom CLI Downloader
+# Miruro Custom CLI Downloader
 
 An advanced, autonomous CLI tool for batch downloading anime streams from Miruro and its providers. Features automatic background tracking, Cloudflare bypass, multi-provider HLS chunk racing, database synchronization, and local media management.
 
@@ -103,4 +103,3 @@ Contributions, issues, and feature requests are welcome!
 
 ## 📝 License
 This project is licensed under the MIT License.
-"# miruro-custom-cli" 
