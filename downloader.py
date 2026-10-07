@@ -181,15 +181,7 @@ def download_image(url, dest_path, force=False):
     pass
 
 def fetch_and_add_series(anilist_id, force=False, miruro_uuid=None, priority=None):
-    anime = None
-    if miruro_uuid:
-        # If we already have the UUID, hit the direct endpoint to bypass search indexing delays
-        anime = api_v1_request(f"anime/{miruro_uuid}")
-    else:
-        # Fallback to search query
-        info = api_v1_request("anime", {"anilist_id_in": str(anilist_id), "limit": 1})
-        if info and "data" in info and info["data"]:
-            anime = info["data"][0]
+    anime = fetch_miruro_metadata(anilist_id, known_uuid=miruro_uuid)
 
     if not anime:
         print(f"{C.RED}✘{C.RESET} Could not fetch metadata for ID {anilist_id} from Miruro API.")
@@ -510,29 +502,54 @@ def api_v1_request(path: str, query: dict = None, impersonate: str = "chrome124"
                 return None
     return None
 
-def fetch_miruro_metadata(anilist_id: int) -> dict | None:
+def fetch_anilist_title(anilist_id: int) -> str | None:
+    try:
+        res = httpx.post("https://graphql.anilist.co", json={"query": f"{{Media(id: {anilist_id}, type: ANIME){{title{{english romaji}}}}}}"})
+        if res.status_code == 200:
+            t = res.json().get("data", {}).get("Media", {}).get("title", {})
+            return t.get("english") or t.get("romaji")
+    except Exception:
+        pass
+    return None
+
+def fetch_miruro_metadata(anilist_id: int, known_uuid: str | None = None) -> dict | None:
     # We must fetch the API to get up-to-date dub_counts, but we can use the cached UUID 
     # to query the faster direct endpoint if we have it!
     series = db.get_series(anilist_id)
-    cached_uuid = series["uuid"] if series and series.get("uuid") and not series["uuid"].isdigit() else None
+    cached_uuid = known_uuid or (series["uuid"] if series and series.get("uuid") and not series["uuid"].isdigit() else None)
     
     if cached_uuid:
         data = api_v1_request(f"anime/{cached_uuid}")
         if data and "id" in data:
             return data
             
-    # Fallback to search endpoint if no cache or direct fetch failed
+    # Fallback 1: search by anilist_id_in
     data = api_v1_request("anime", {"anilist_id_in": str(anilist_id), "limit": 100})
     if data and "data" in data and len(data["data"]) > 0:
         anime_data = data["data"][0]
-        # Cache it back to the database
-        if series:
+        if series and not known_uuid:
             try:
                 with db.db() as conn:
                     conn.execute("UPDATE series SET uuid = ? WHERE anime_id = ?", (anime_data["id"], anilist_id))
             except Exception:
                 pass
         return anime_data
+
+    # Fallback 2: Miruro's DB is often missing AniList IDs but has the title
+    title = (series.get("title") if series else None) or fetch_anilist_title(anilist_id)
+    if title:
+        data = api_v1_request("anime", {"q": title, "limit": 20})
+        if data and "data" in data:
+            for a in data["data"]:
+                ext = a.get("external_ids", {})
+                if str(anilist_id) in str(ext.get("anilist", [])):
+                    if series and not known_uuid:
+                        try:
+                            with db.db() as conn:
+                                conn.execute("UPDATE series SET uuid = ? WHERE anime_id = ?", (a["id"], anilist_id))
+                        except Exception:
+                            pass
+                    return a
     return None
 
 def fetch_miruro_id(anilist_id: int) -> str | None:
