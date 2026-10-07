@@ -113,15 +113,34 @@ CREATE TABLE IF NOT EXISTS failed_downloads (
 );
 """
 
+HISTORY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS download_history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    anime_id     INTEGER NOT NULL,
+    title        TEXT,
+    episode      REAL NOT NULL,
+    category     TEXT,
+    server       TEXT,
+    size_bytes   INTEGER DEFAULT 0,
+    duration_s   REAL DEFAULT 0,
+    completed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dh_completed ON download_history(completed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dh_anime     ON download_history(anime_id);
+"""
+
 def init_db():
     with db() as conn:
         conn.executescript(SCHEMA)
+        conn.executescript(HISTORY_SCHEMA)
         # Attempt to add columns to existing DB silently without wiping data
         _migrations = [
             "ALTER TABLE series ADD COLUMN is_tracked INTEGER DEFAULT 0",
             "ALTER TABLE series ADD COLUMN priority INTEGER DEFAULT 0",
             "ALTER TABLE series ADD COLUMN meta_status TEXT DEFAULT 'none'",
             "ALTER TABLE series ADD COLUMN watchlist_status TEXT DEFAULT NULL",
+            "ALTER TABLE series ADD COLUMN next_airing_ep REAL DEFAULT NULL",
+            "ALTER TABLE series ADD COLUMN next_airing_at TEXT DEFAULT NULL",
         ]
         for sql in _migrations:
             try:
@@ -647,3 +666,71 @@ def clear_all_failed_downloads():
     with db() as conn:
         conn.execute("DELETE FROM failed_downloads")
 
+
+
+# ── Airing calendar ───────────────────────────────────────────────────────────
+def set_next_airing(anime_id: int, episode, air_at):
+    """Store the next airing episode (air_at = ISO-8601 UTC string) for a series. None clears it."""
+    with db() as conn:
+        conn.execute("UPDATE series SET next_airing_ep=?, next_airing_at=? WHERE anime_id=?",
+                     (episode, air_at, anime_id))
+
+
+# ── Download history & stats ──────────────────────────────────────────────────
+def record_download(anime_id: int, title: str, episode: float, category: str = "",
+                    server: str = "", size_bytes: int = 0, duration_s: float = 0.0):
+    """Append a completed download to the history log."""
+    with db() as conn:
+        conn.execute("""
+            INSERT INTO download_history
+                (anime_id, title, episode, category, server, size_bytes, duration_s, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (anime_id, title, episode, category, server, int(size_bytes or 0),
+              float(duration_s or 0), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+
+
+def get_download_history(limit: int = 100, offset: int = 0) -> list[dict]:
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM download_history ORDER BY id DESC LIMIT ? OFFSET ?",
+            (max(1, min(limit, 1000)), max(0, offset))).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_download_stats(days: int = 30) -> dict:
+    """Aggregate totals, per-day series, category split and top series."""
+    days = max(1, min(days, 365))
+    with db() as conn:
+        tot = conn.execute("""
+            SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes),0) AS bytes,
+                   COALESCE(SUM(duration_s),0) AS secs FROM download_history
+        """).fetchone()
+        per_day = conn.execute("""
+            SELECT substr(completed_at,1,10) AS day, COUNT(*) AS episodes,
+                   COALESCE(SUM(size_bytes),0) AS bytes
+            FROM download_history
+            WHERE completed_at >= datetime('now','localtime', ?)
+            GROUP BY day ORDER BY day
+        """, (f"-{days} days",)).fetchall()
+        by_cat = conn.execute("""
+            SELECT COALESCE(NULLIF(category,''),'?') AS category, COUNT(*) AS episodes
+            FROM download_history GROUP BY 1 ORDER BY 2 DESC
+        """).fetchall()
+        top = conn.execute("""
+            SELECT anime_id, MAX(title) AS title, COUNT(*) AS episodes,
+                   COALESCE(SUM(size_bytes),0) AS bytes
+            FROM download_history GROUP BY anime_id ORDER BY episodes DESC LIMIT 8
+        """).fetchall()
+        week = conn.execute("""
+            SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes),0) AS bytes FROM download_history
+            WHERE completed_at >= datetime('now','localtime','-7 days')
+        """).fetchone()
+    secs = tot["secs"] or 0
+    return {
+        "total_episodes": tot["n"], "total_bytes": tot["bytes"], "total_seconds": secs,
+        "avg_speed_bps": (tot["bytes"] / secs) if secs > 0 else 0,
+        "week_episodes": week["n"], "week_bytes": week["bytes"],
+        "per_day": [dict(r) for r in per_day],
+        "by_category": [dict(r) for r in by_cat],
+        "top_series": [dict(r) for r in top],
+    }

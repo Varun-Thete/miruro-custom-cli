@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- Title: Miruro Series Manager UI -->
 <!-- Creator: Vernox -->
-<!-- Description: Single-page modern dashboard for managing tracked series with live job logs via SSE. -->
+<!-- Description: Single-page dashboard with library, download queue, airing calendar and stats, bulk actions, search-and-add and live job progress via SSE. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -19,55 +19,120 @@ html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Inter,sy
 body{background:
   radial-gradient(900px 500px at 10% -10%,rgba(124,92,255,.22),transparent 60%),
   radial-gradient(800px 500px at 100% 0%,rgba(34,211,238,.14),transparent 60%),var(--bg);
-  min-height:100vh;padding-bottom:70px}
+  min-height:100vh;padding-bottom:120px}
 button,input,select{font:inherit;color:inherit}
 header{position:sticky;top:0;z-index:20;backdrop-filter:blur(16px);background:rgba(11,13,20,.7);
-  border-bottom:1px solid var(--border);padding:14px 28px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+  border-bottom:1px solid var(--border);padding:12px 28px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .brand{font-weight:700;font-size:18px;letter-spacing:.3px;display:flex;align-items:center;gap:10px}
 .brand i{width:12px;height:12px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2));box-shadow:0 0 14px var(--accent)}
+.tabs{display:flex;gap:4px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:3px}
+.tab{background:none;border:0;border-radius:9px;padding:6px 14px;cursor:pointer;color:var(--muted);transition:.15s}
+.tab:hover{color:var(--text)} .tab.on{background:var(--panel-2);color:var(--text);box-shadow:0 0 0 1px var(--border) inset}
+.tab .n{display:inline-block;min-width:18px;padding:0 6px;margin-left:6px;border-radius:99px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;text-align:center}
+.tab .n:empty{display:none}
 .live{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--err)}
 .dot.on{background:var(--ok);box-shadow:0 0 10px var(--ok)}
 main{max-width:1500px;margin:0 auto;padding:24px 28px}
+.view{display:none} .view.on{display:block}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:22px}
 .stat{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
 .stat b{display:block;font-size:26px;font-weight:700}
+.stat small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 .stat span{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.8px}
 .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;align-items:center}
 .toolbar input[type=search]{flex:1;min-width:220px}
+.toolbar .sp{flex:1}
 input,select{background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;outline:none}
 input:focus,select:focus{border-color:var(--accent)}
+input[type=checkbox]{width:16px;height:16px;padding:0;accent-color:var(--accent);cursor:pointer}
 select option{background:#14172a}
 .btn{background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:9px 14px;cursor:pointer;transition:.15s}
 .btn:hover{background:rgba(255,255,255,.12);transform:translateY(-1px)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
 .btn.primary{background:linear-gradient(135deg,var(--accent),#5b8cff);border-color:transparent;font-weight:600}
 .btn.danger:hover{background:rgba(248,113,113,.2);border-color:var(--err)}
+.btn.on{border-color:var(--warn);color:var(--warn)}
 .btn.sm{padding:5px 9px;font-size:12px;border-radius:8px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:18px}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;
   display:flex;flex-direction:column;transition:.2s;position:relative}
 .card:hover{transform:translateY(-4px);border-color:rgba(124,92,255,.5);box-shadow:0 14px 40px rgba(0,0,0,.45)}
-.poster{aspect-ratio:2/3;background:#151826 center/cover no-repeat;position:relative}
+.card.picked{border-color:var(--accent);box-shadow:0 0 0 2px rgba(124,92,255,.45)}
+.poster{aspect-ratio:2/3;background:#151826 center/cover no-repeat;position:relative;cursor:pointer}
 .poster::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(11,13,20,.95) 0%,transparent 55%)}
-.badges{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;z-index:2}
+.pick{position:absolute;top:10px;left:10px;z-index:3;width:24px;height:24px;border-radius:7px;background:rgba(0,0,0,.6);
+  border:1px solid var(--border);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px)}
+.pick input{margin:0}
+.badges{position:absolute;top:10px;left:42px;right:10px;display:flex;justify-content:space-between;z-index:2}
 .badge{padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600;background:rgba(0,0,0,.6);backdrop-filter:blur(6px);border:1px solid var(--border)}
-.badge.prio{color:var(--accent-2)} .badge.fail{color:var(--err);border-color:var(--err)}
+.badge.prio{color:var(--accent-2)}
 .badge.st-RELEASING{color:var(--ok)} .badge.st-FINISHED{color:var(--muted)}
 .title{position:absolute;bottom:12px;left:14px;right:14px;z-index:2;font-weight:600;font-size:15px;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .body{padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
 .prog{height:6px;border-radius:99px;background:var(--panel-2);overflow:hidden}
 .prog>div{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .4s}
-.meta{display:flex;justify-content:space-between;color:var(--muted);font-size:12px}
-.row{display:flex;gap:6px;flex-wrap:wrap}
+.prog.live>div{background:linear-gradient(90deg,var(--ok),var(--accent-2));transition:width .25s}
+.livebar{display:none;flex-direction:column;gap:4px;font-size:12px;color:var(--accent-2)}
+.livebar.on{display:flex}
+.livebar .l{display:flex;justify-content:space-between}
+.meta{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;gap:8px}
+.air{color:var(--accent-2)}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .stepper{display:flex;align-items:center;gap:4px;margin-left:auto}
 .stepper input{width:58px;text-align:center;padding:4px 6px}
 .card.untracked{opacity:.55}
 .empty{grid-column:1/-1;text-align:center;color:var(--muted);padding:80px 0}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-bottom:18px}
+.panel h4{margin:0 0 12px;font-size:13px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted)}
+/* Bulk bar */
+#bulk{position:fixed;left:50%;bottom:62px;transform:translate(-50%,160%);z-index:35;background:#171a30;border:1px solid var(--accent);
+  border-radius:16px;padding:10px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:94vw;
+  box-shadow:0 14px 50px rgba(0,0,0,.6);transition:transform .25s}
+#bulk.on{transform:translate(-50%,0)}
+#bulk b{margin-right:6px} #bulk input[type=number]{width:70px;padding:5px 8px}
+/* Queue */
+.qrow{display:grid;grid-template-columns:28px 1fr 220px auto;gap:14px;align-items:center;padding:12px 14px;
+  border:1px solid var(--border);border-radius:12px;background:var(--panel);margin-bottom:8px}
+.qrow .ic{font-size:16px;text-align:center}
+.qrow .t{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qrow .s{color:var(--muted);font-size:12px}
+.qrow.running{border-color:rgba(34,211,238,.4)}
+.qrow.done .ic{color:var(--ok)} .qrow.failed .ic{color:var(--err)} .qrow.cancelled .ic{color:var(--warn)}
+.qrow .pr{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.sep{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.8px;margin:18px 0 8px}
+/* Calendar */
+.cal{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.day{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.day.today{border-color:var(--accent)}
+.day h5{margin:0 0 10px;font-size:14px;display:flex;justify-content:space-between}
+.day h5 span{color:var(--muted);font-weight:400;font-size:12px}
+.ev{display:flex;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--border);cursor:pointer}
+.ev:first-of-type{border-top:0}
+.ev img{width:36px;height:52px;object-fit:cover;border-radius:6px;background:#151826;flex:none}
+.ev .i{min-width:0;flex:1}
+.ev .n{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ev .m{color:var(--muted);font-size:12px}
+.tag{padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;border:1px solid var(--border);color:var(--muted)}
+.tag.ok{color:var(--ok);border-color:var(--ok)} .tag.proj{color:var(--warn);border-color:var(--warn)}
+/* Stats */
+.chart{display:flex;align-items:flex-end;gap:3px;height:140px}
+.chart .c{flex:1;min-width:4px;background:linear-gradient(to top,var(--accent),var(--accent-2));border-radius:4px 4px 0 0;position:relative;min-height:2px}
+.chart .c:hover{filter:brightness(1.3)}
+.axis{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-top:6px}
+.bar{height:12px;border-radius:99px;background:var(--panel-2);overflow:hidden;display:flex}
+.bar i{display:block;height:100%} .bar .a{background:var(--accent)} .bar .b{background:var(--accent-2)}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:500;font-size:12px;padding:6px 8px;border-bottom:1px solid var(--border)}
+td{padding:7px 8px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+.rowl{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px}
 /* Modal */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:50}
 .modal-bg.open{display:flex}
-.modal{background:#12152a;border:1px solid var(--border);border-radius:20px;padding:24px;width:min(520px,92vw);max-height:88vh;overflow:auto}
+.modal{background:#12152a;border:1px solid var(--border);border-radius:20px;padding:24px;width:min(560px,94vw);max-height:88vh;overflow:auto}
+.modal.wide{width:min(680px,94vw)}
 .modal h3{margin:0 0 14px}
 .field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
 .field label{color:var(--muted);font-size:12px}
@@ -76,6 +141,12 @@ select option{background:#14172a}
 .synopsis{color:var(--muted);max-height:120px;overflow:auto;margin:8px 0 14px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 .chip{background:var(--panel-2);padding:2px 9px;border-radius:99px;font-size:11px}
+.sr{display:flex;gap:12px;padding:10px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--panel)}
+.sr img{width:52px;height:74px;object-fit:cover;border-radius:8px;background:#151826;flex:none}
+.sr .i{flex:1;min-width:0}
+.sr .n{font-weight:600} .sr .m{color:var(--muted);font-size:12px}
+.sr .a{display:flex;align-items:center}
+.hint{color:var(--muted);font-size:12px;text-align:center;padding:20px 0}
 /* Console drawer */
 #console{position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(8,10,18,.96);border-top:1px solid var(--border);
   backdrop-filter:blur(14px);height:46px;transition:height .25s;display:flex;flex-direction:column}
@@ -84,9 +155,10 @@ select option{background:#14172a}
 .c-head .jobs{display:flex;gap:6px;overflow:auto;flex:1}
 .jobchip{padding:3px 10px;border-radius:99px;font-size:12px;background:var(--panel-2);border:1px solid var(--border);cursor:pointer;white-space:nowrap}
 .jobchip.sel{border-color:var(--accent)}
-.jobchip.running::before{content:"● ";color:var(--accent-2);animation:pulse 1s infinite}
-.jobchip.done::before{content:"✔ ";color:var(--ok)} .jobchip.failed::before{content:"✘ ";color:var(--err)}
-.jobchip.cancelled::before{content:"■ ";color:var(--warn)}
+.jobchip.running::before{content:"\25CF ";color:var(--accent-2);animation:pulse 1s infinite}
+.jobchip.queued::before{content:"\23F3 "}
+.jobchip.done::before{content:"\2714 ";color:var(--ok)} .jobchip.failed::before{content:"\2718 ";color:var(--err)}
+.jobchip.cancelled::before{content:"\25A0 ";color:var(--warn)}
 @keyframes pulse{50%{opacity:.2}}
 #log{flex:1;overflow:auto;padding:10px 20px;font:12px/1.55 ui-monospace,Consolas,monospace}
 #log div.ok{color:var(--ok)} #log div.warn{color:var(--warn)} #log div.error{color:var(--err)} #log div.info{color:#b9bfd6}
@@ -96,69 +168,132 @@ select option{background:#14172a}
   animation:in .25s;max-width:340px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
 .toast.err{border-left-color:var(--err)} .toast.ok{border-left-color:var(--ok)}
 @keyframes in{from{transform:translateX(30px);opacity:0}}
+@media(max-width:720px){
+  header{padding:10px 14px} main{padding:16px 14px}
+  .qrow{grid-template-columns:24px 1fr auto} .qrow .pr{grid-column:1/-1;order:3}
+}
 </style>
 </head>
 <body>
 <header>
   <div class="brand"><i></i>Miruro Manager</div>
-  <button class="btn primary" id="btnAdd">＋ Add series</button>
-  <button class="btn" id="btnAuto">▶ Run auto-scan</button>
-  <button class="btn" id="btnDry">🔍 Dry run</button>
-  <button class="btn" id="btnRetry">↻ Retry failed</button>
-  <div class="live"><span class="dot" id="dot"></span><span id="liveTxt">connecting…</span></div>
+  <nav class="tabs" id="tabs">
+    <button class="tab on" data-tab="library">Library</button>
+    <button class="tab" data-tab="queue">Queue<span class="n" id="qBadge"></span></button>
+    <button class="tab" data-tab="calendar">Calendar</button>
+    <button class="tab" data-tab="stats">Stats</button>
+  </nav>
+  <button class="btn primary" id="btnAdd">&#xFF0B; Add series</button>
+  <button class="btn" id="btnAuto">&#9654; Run auto-scan</button>
+  <button class="btn" id="btnDry">&#128269; Dry run</button>
+  <button class="btn" id="btnRetry">&#8635; Retry failed</button>
+  <div class="live"><span class="dot" id="dot"></span><span id="liveTxt">connecting&hellip;</span></div>
 </header>
 
 <main>
-  <section class="stats" id="stats"></section>
-  <div class="toolbar">
-    <input type="search" id="q" placeholder="Search title or AniList ID…">
-    <select id="scope">
-      <option value="tracked">Tracked</option><option value="untracked">Untracked</option><option value="all">All</option>
-    </select>
-    <select id="sort">
-      <option value="priority">Sort: Priority</option><option value="title">Sort: Title</option>
-      <option value="progress">Sort: Progress</option>
-    </select>
-    <select id="statusFilter">
-      <option value="">Any status</option><option value="RELEASING">Releasing</option><option value="FINISHED">Finished</option>
-    </select>
-  </div>
-  <div class="grid" id="grid"></div>
+  <!-- LIBRARY -->
+  <section class="view on" id="v-library">
+    <section class="stats" id="stats"></section>
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="Search title or AniList ID&hellip;">
+      <select id="scope"><option value="tracked">Tracked</option><option value="untracked">Untracked</option><option value="all">All</option></select>
+      <select id="sort"><option value="priority">Sort: Priority</option><option value="title">Sort: Title</option><option value="progress">Sort: Progress</option><option value="airing">Sort: Next airing</option></select>
+      <select id="statusFilter"><option value="">Any status</option><option value="RELEASING">Releasing</option><option value="FINISHED">Finished</option></select>
+      <button class="btn" id="btnSelAll">&#9745; Select all shown</button>
+    </div>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <!-- QUEUE -->
+  <section class="view" id="v-queue">
+    <div class="toolbar">
+      <label>Parallel jobs&nbsp;<select id="qConc"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+      <button class="btn" id="qPause">&#10074;&#10074; Pause queue</button>
+      <button class="btn danger" id="qClear">Clear queued</button>
+      <span class="sp"></span>
+      <span class="s" id="qInfo" style="color:var(--muted)"></span>
+    </div>
+    <div id="qList"></div>
+  </section>
+
+  <!-- CALENDAR -->
+  <section class="view" id="v-calendar">
+    <div class="toolbar">
+      <select id="calDays"><option value="14">Next 14 days</option><option value="28" selected>Next 28 days</option><option value="60">Next 60 days</option></select>
+      <button class="btn" id="calRefresh">&#8635; Refresh schedule</button>
+      <span class="sp"></span><span id="calNote" style="color:var(--muted);font-size:12px"></span>
+    </div>
+    <div id="calNext"></div>
+    <div class="cal" id="calGrid"></div>
+  </section>
+
+  <!-- STATS -->
+  <section class="view" id="v-stats">
+    <div class="toolbar">
+      <select id="stDays"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select>
+      <span class="sp"></span><span style="color:var(--muted);font-size:12px">History is recorded for downloads made since this version.</span>
+    </div>
+    <section class="stats" id="stCards"></section>
+    <div class="panel"><h4>Episodes per day</h4><div class="chart" id="stChart"></div><div class="axis" id="stAxis"></div></div>
+    <div class="two">
+      <div class="panel"><h4>Disk</h4><div id="stDisk"></div></div>
+      <div class="panel"><h4>By category</h4><div id="stCat"></div><h4 style="margin-top:16px">Top series</h4><div id="stTop"></div></div>
+    </div>
+    <div class="panel" style="overflow:auto"><h4>Recent downloads</h4><table><thead><tr><th>When</th><th>Series</th><th>Ep</th><th>Cat</th><th>Server</th><th>Size</th><th>Took</th></tr></thead><tbody id="stHist"></tbody></table></div>
+  </section>
 </main>
 
-<div class="modal-bg" id="mAdd"><div class="modal">
+<!-- Bulk bar -->
+<div id="bulk">
+  <b id="bulkN">0 selected</b>
+  <button class="btn sm" data-bulk="download">&#11015; Download</button>
+  <button class="btn sm" data-bulk="refresh">&#10227; Refresh</button>
+  <button class="btn sm" data-bulk="track">&#9654; Track</button>
+  <button class="btn sm" data-bulk="untrack">&#9208; Untrack</button>
+  <span class="row"><input type="number" id="bulkP" value="0" title="Priority value"><button class="btn sm" data-bulk="priority_set">Set&nbsp;priority</button>
+    <button class="btn sm" data-bulk="priority_add" data-val="1">+1</button><button class="btn sm" data-bulk="priority_add" data-val="-1">&minus;1</button></span>
+  <button class="btn sm danger" data-bulk="delete">&#128465; Delete</button>
+  <button class="btn sm" id="bulkClear">Clear</button>
+</div>
+
+<!-- Add / search modal -->
+<div class="modal-bg" id="mAdd"><div class="modal wide">
   <h3>Add series</h3>
-  <div class="field"><label>AniList ID, Miruro UUID or miruro.bz watch URL</label>
-    <input id="addQ" placeholder="https://www.miruro.bz/watch/…"></div>
-  <div class="field"><label>Priority (higher downloads first)</label><input id="addP" type="number" value="0"></div>
-  <div class="actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="addGo">Add</button></div>
+  <div class="field"><label>Search by title, or paste an AniList ID / Miruro URL</label>
+    <input id="sq" placeholder="e.g. Frieren, 163142, https://www.miruro.bz/watch/&hellip;" autocomplete="off"></div>
+  <div class="field" style="flex-direction:row;align-items:center;gap:10px"><label style="margin:0">Priority</label><input id="addP" type="number" value="0" style="width:90px"></div>
+  <div id="sres"><div class="hint">Type at least 2 characters to search AniList.</div></div>
+  <div class="actions"><button class="btn" data-close>Close</button></div>
 </div></div>
 
 <div class="modal-bg" id="mDetail"><div class="modal" id="detail"></div></div>
-
 <div id="toasts"></div>
 
 <div id="console">
-  <div class="c-head" id="cHead"><b>Console</b><div class="jobs" id="jobChips"></div><span id="cArrow">▲</span></div>
+  <div class="c-head" id="cHead"><b>Console</b><div class="jobs" id="jobChips"></div><span id="cArrow">&#9650;</span></div>
   <div id="log"></div>
 </div>
 
 <script>
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 const $ = (s, r=document) => r.querySelector(s);
-const state = {series: [], jobs: new Map(), selJob: null, logs: new Map()};
+const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+const state = {series: [], jobs: new Map(), selJob: null, sel: new Set(), tab: 'library', queue: {max_concurrent: 1, paused: false},
+               samples: new Map(), shown: []};
 
+/* ---------- utils ---------- */
 async function api(path, opts={}) {
   const headers = {'Content-Type': 'application/json'};
   if (TOKEN) headers['X-Token'] = TOKEN;
   const res = await fetch('/api' + path, {...opts, headers});
   if (!res.ok) {
     let msg = res.statusText;
-    try { msg = (await res.json()).detail || msg; } catch {}
+    try { const j = await res.json(); msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail); } catch {}
     throw new Error(msg);
   }
   return res.json();
 }
+const post = (p, body) => api(p, {method: 'POST', body: body === undefined ? undefined : JSON.stringify(body)});
 function toast(msg, kind='') {
   const t = document.createElement('div');
   t.className = 'toast ' + kind; t.textContent = msg;
@@ -171,76 +306,301 @@ function el(tag, props={}, ...kids) {
     if (k === 'class') e.className = v;
     else if (k === 'style') e.style.cssText = v;
     else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k === 'checked' || k === 'disabled' || k === 'value') e[k] = v;
     else e.setAttribute(k, v);
   }
-  kids.flat().forEach(c => e.append(c instanceof Node ? c : document.createTextNode(c)));
+  kids.flat().forEach(c => { if (c != null && c !== false) e.append(c instanceof Node ? c : document.createTextNode(c)); });
   return e;
 }
-
-/* ---------- data ---------- */
-async function loadSeries() {
-  state.series = await api('/series?scope=' + $('#scope').value);
-  render();
+const fmtBytes = n => { n = +n || 0; const u = ['B','KB','MB','GB','TB']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return (i ? n.toFixed(n >= 100 ? 0 : 1) : n) + ' ' + u[i]; };
+const fmtSecs = s => { s = Math.round(+s || 0); if (s < 60) return s + 's'; const m = Math.floor(s / 60); if (m < 60) return m + 'm ' + (s % 60) + 's'; return Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; };
+function fmtIn(ms) {
+  if (ms <= 0) return 'now';
+  const m = Math.floor(ms / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m}m`;
 }
+const epStr = n => (n == null ? '?' : (Number.isInteger(+n) ? String(+n) : String(n)));
+const setPoster = (node, url) => { if (url) node.style.backgroundImage = `url("${encodeURI(url)}")`; };
+const raf = (() => { const pending = new Set(); return fn => { if (pending.has(fn)) return; pending.add(fn); requestAnimationFrame(() => { pending.delete(fn); fn(); }); }; })();
+
+/* ---------- tabs ---------- */
+function setTab(t) {
+  state.tab = t; history.replaceState(null, '', '#' + t + (TOKEN ? '' : ''));
+  $$('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  $$('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + t));
+  loadTab();
+  updateBulk();
+}
+$$('.tab').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+function loadTab() {
+  if (state.tab === 'library') refresh();
+  else if (state.tab === 'queue') loadQueue();
+  else if (state.tab === 'calendar') loadCalendar();
+  else if (state.tab === 'stats') loadStats2();
+}
+
+/* ---------- library ---------- */
+async function loadSeries() { state.series = await api('/series?scope=' + $('#scope').value); render(); }
 async function loadStats() {
   const s = await api('/stats');
   const box = $('#stats'); box.replaceChildren();
   [['Tracked', s.tracked], ['Total in DB', s.total_series], ['Episodes downloaded', s.episodes_downloaded],
-   ['Running jobs', s.running_jobs]].forEach(([k, v]) =>
+   ['Running jobs', s.running_jobs], ['Queued', s.queued_jobs]].forEach(([k, v]) =>
     box.append(el('div', {class: 'stat'}, el('b', {}, String(v)), el('span', {}, k))));
 }
 const refresh = guard(async () => { await Promise.all([loadSeries(), loadStats()]); });
-let rt; const refreshSoon = () => { clearTimeout(rt); rt = setTimeout(refresh, 250); };
+let rt; const refreshSoon = () => { clearTimeout(rt); rt = setTimeout(() => {
+  if (state.tab === 'library') refresh(); else loadTab(); }, 250); };
 
-/* ---------- render ---------- */
 function visible() {
   const q = $('#q').value.trim().toLowerCase(), st = $('#statusFilter').value;
-  let r = state.series.filter(s => (!q || (s.title||'').toLowerCase().includes(q) || String(s.anime_id).includes(q))
-    && (!st || s.status === st));
+  let r = state.series.filter(s => (!q || (s.title||'').toLowerCase().includes(q) || String(s.anime_id).includes(q)) && (!st || s.status === st));
   const by = $('#sort').value;
   const prog = s => s.last_episode_aired ? s.downloaded_count / s.last_episode_aired : 0;
+  const air = s => s.next_airing_at ? Date.parse(s.next_airing_at) : Infinity;
   r.sort((a, b) => by === 'title' ? (a.title||'').localeCompare(b.title||'')
     : by === 'progress' ? prog(a) - prog(b)
+    : by === 'airing' ? air(a) - air(b)
     : b.priority - a.priority || (a.title||'').localeCompare(b.title||''));
   return r;
+}
+function jobForSeries(id) {
+  for (const j of state.jobs.values())
+    if (j.status === 'running' && (j.anime_id === id || (j.current && j.current.anime_id === id))) return j;
+  return null;
 }
 function cardFor(s) {
   const total = s.total_episodes || s.last_episode_aired || 0;
   const pct = total ? Math.min(100, Math.round(100 * s.downloaded_count / total)) : 0;
   const poster = el('div', {class: 'poster'});
-  if (s.poster) poster.style.backgroundImage = `url("${encodeURI(s.poster)}")`;
+  setPoster(poster, s.poster);
+  const picked = state.sel.has(s.anime_id);
+  const cb = el('input', {type: 'checkbox', checked: picked, title: 'Select'});
+  cb.onchange = () => { cb.checked ? state.sel.add(s.anime_id) : state.sel.delete(s.anime_id); card.classList.toggle('picked', cb.checked); updateBulk(); };
   poster.append(
     el('div', {class: 'badges'},
-      el('span', {class: 'badge prio'}, '★ ' + s.priority),
+      el('span', {class: 'badge prio'}, '\u2605 ' + s.priority),
       el('span', {class: 'badge st-' + s.status}, s.status || '')),
     el('div', {class: 'title'}, s.title || ('ID ' + s.anime_id)));
-  poster.style.cursor = 'pointer'; poster.onclick = () => openDetail(s);
+  poster.onclick = () => openDetail(s);
   const prio = el('input', {type: 'number', value: s.priority, title: 'Priority'});
-  const setPrio = guard(async v => { await api('/series/' + s.anime_id, {method: 'PATCH', body: JSON.stringify({priority: v})}); toast('Priority → ' + v, 'ok'); });
+  const setPrio = guard(async v => { await api('/series/' + s.anime_id, {method: 'PATCH', body: JSON.stringify({priority: v})}); toast('Priority \u2192 ' + v, 'ok'); });
   prio.onchange = () => setPrio(parseInt(prio.value || '0', 10));
   const bump = d => () => { prio.value = (parseInt(prio.value || '0', 10) + d); prio.onchange(); };
-  return el('div', {class: 'card' + (s.is_tracked ? '' : ' untracked')},
-    poster,
+  let airTxt = null;
+  if (s.next_airing_at) {
+    const ms = Date.parse(s.next_airing_at) - Date.now();
+    airTxt = el('span', {class: 'air', title: new Date(s.next_airing_at).toLocaleString()}, `EP ${epStr(s.next_airing_ep)} \u00B7 ${ms > 0 ? 'in ' + fmtIn(ms) : 'aired'}`);
+  }
+  const card = el('div', {class: 'card' + (s.is_tracked ? '' : ' untracked') + (picked ? ' picked' : ''), 'data-aid': s.anime_id},
+    el('div', {class: 'pick'}, cb), poster,
     el('div', {class: 'body'},
+      el('div', {class: 'livebar'}, el('div', {class: 'l'}, el('span', {class: 'lt'}), el('span', {class: 'ls'})), el('div', {class: 'prog live'}, el('div', {style: 'width:0%'}))),
       el('div', {class: 'prog'}, el('div', {style: `width:${pct}%`})),
-      el('div', {class: 'meta'}, el('span', {}, `${s.downloaded_count}/${total || '?'} downloaded`), el('span', {}, `aired ${s.last_episode_aired || 0}`)),
+      el('div', {class: 'meta'}, el('span', {}, `${s.downloaded_count}/${total || '?'} downloaded`), airTxt || el('span', {}, `aired ${s.last_episode_aired || 0}`)),
       el('div', {class: 'row'},
-        el('button', {class: 'btn sm', onclick: guard(() => startDownload(s))}, '⬇ Download'),
+        el('button', {class: 'btn sm', onclick: guard(() => startDownload(s))}, '\u2B07 Download'),
         el('div', {class: 'stepper'},
-          el('button', {class: 'btn sm', onclick: bump(-1)}, '−'), prio,
+          el('button', {class: 'btn sm', onclick: bump(-1)}, '\u2212'), prio,
           el('button', {class: 'btn sm', onclick: bump(1)}, '+')))));
+  return card;
 }
 function render() {
   const g = $('#grid'); g.replaceChildren();
-  const r = visible();
-  if (!r.length) g.append(el('div', {class: 'empty'}, 'No series match. Add one with “＋ Add series”.'));
+  const r = state.shown = visible();
+  if (!r.length) g.append(el('div', {class: 'empty'}, 'No series match. Add one with \u201C\uFF0B Add series\u201D.'));
   r.forEach(s => g.append(cardFor(s)));
+  paintLive(); updateBulk();
 }
+function paintLive() {
+  $$('#grid .card').forEach(card => {
+    const j = jobForSeries(+card.dataset.aid), lb = $('.livebar', card);
+    if (!j) { lb.classList.remove('on'); return; }
+    lb.classList.add('on');
+    const p = j.progress, cur = j.current || {};
+    const pct = p && p.total ? Math.round(100 * p.done / p.total) : 0;
+    $('.lt', lb).textContent = (cur.episode != null ? `EP ${epStr(cur.episode)}` : 'Working') + (cur.category ? ` (${cur.category})` : '') + (p ? ` \u00B7 ${pct}%` : '\u2026');
+    $('.ls', lb).textContent = p ? `${fmtBytes(p.bps)}/s` : '';
+    $('.prog > div', lb).style.width = pct + '%';
+  });
+}
+$('#btnSelAll').onclick = () => {
+  const ids = state.shown.map(s => s.anime_id), all = ids.every(i => state.sel.has(i));
+  ids.forEach(i => all ? state.sel.delete(i) : state.sel.add(i)); render();
+};
+setInterval(() => { if (state.tab === 'library' && !document.activeElement.closest?.('#grid')) render(); }, 60000);
 
-/* ---------- actions ---------- */
+/* ---------- bulk ---------- */
+function updateBulk() {
+  const n = state.sel.size;
+  $('#bulkN').textContent = n + ' selected';
+  $('#bulk').classList.toggle('on', n > 0 && state.tab === 'library');
+}
+$('#bulkClear').onclick = () => { state.sel.clear(); render(); };
+$$('[data-bulk]').forEach(b => b.onclick = guard(async () => {
+  const action = b.dataset.bulk, ids = [...state.sel];
+  if (!ids.length) return;
+  let value = null;
+  if (action === 'priority_set') value = parseInt($('#bulkP').value || '0', 10);
+  if (action === 'priority_add') value = parseInt(b.dataset.val, 10);
+  if (action === 'delete' && !confirm(`Permanently delete ${ids.length} series and their history from the DB?`)) return;
+  if (action === 'download' && ids.length > 10 && !confirm(`Queue downloads for ${ids.length} series?`)) return;
+  const r = await post('/bulk', {ids, action, value});
+  toast(`${action.replace('_', ' ')}: ${r.ok} done` + (r.skipped ? `, ${r.skipped} skipped` : '') + (r.errors.length ? `, ${r.errors.length} failed` : ''), r.errors.length ? 'err' : 'ok');
+  if (r.errors.length) console.warn('bulk errors', r.errors);
+  if (action === 'delete') state.sel.clear();
+  if (action === 'download' || action === 'refresh') { openConsole(true); setTab('queue'); } else await refresh();
+}));
+
+/* ---------- queue ---------- */
+async function loadQueue() {
+  const [jobs, q] = await Promise.all([api('/jobs'), api('/queue')]);
+  state.jobs = new Map(jobs.map(j => [j.id, j])); state.queue = q;
+  renderQueue(); renderJobs();
+}
+function etaFor(j) {
+  const p = j.progress; if (!p || !p.total) return '';
+  const key = `${j.current && j.current.anime_id}:${j.current && j.current.episode}`;
+  const s = state.samples.get(j.id);
+  if (!s || s.key !== key || p.done < s.d0) { state.samples.set(j.id, {key, t0: Date.now(), d0: p.done}); return ''; }
+  const dt = (Date.now() - s.t0) / 1000, dd = p.done - s.d0;
+  if (dt < 2 || dd <= 0) return '';
+  return 'ETA ' + fmtSecs((p.total - p.done) / (dd / dt));
+}
+function qRow(j) {
+  const icon = {running: '\u25CF', queued: '\u23F3', done: '\u2714', failed: '\u2718', cancelled: '\u25A0'}[j.status] || '?';
+  const cur = j.current || {};
+  let sub = j.status === 'queued' ? `#${j.position} in queue`
+    : j.status === 'running' ? (cur.title ? `${cur.title}${cur.episode != null ? ' \u00B7 EP ' + epStr(cur.episode) : ''}${cur.category ? ' (' + cur.category + ')' : ''}` : 'starting\u2026')
+    : j.ended ? new Date(j.ended * 1000).toLocaleTimeString() + (j.eps_done ? ` \u00B7 ${j.eps_done} ep` : '') + (j.exit_code ? ` \u00B7 exit ${j.exit_code}` : '') : '';
+  const p = j.progress, pct = p && p.total ? Math.round(100 * p.done / p.total) : 0;
+  const pr = el('div', {class: 'pr'});
+  if (j.status === 'running') {
+    pr.append(el('div', {class: 'prog live'}, el('div', {style: `width:${pct}%`, 'data-pb': j.id})),
+      el('div', {class: 'meta', 'data-pt': j.id}, p ? `${pct}% \u00B7 ${p.done}/${p.total} seg \u00B7 ${fmtBytes(p.bps)}/s \u00B7 ${etaFor(j)}` : (j.eps_done ? `${j.eps_done} episode(s) done` : 'waiting for stream\u2026')));
+  }
+  const acts = el('div', {class: 'row'});
+  if (j.status === 'queued' || j.status === 'running')
+    acts.append(el('button', {class: 'btn sm danger', onclick: guard(async () => { await api('/jobs/' + j.id, {method: 'DELETE'}); })}, j.status === 'queued' ? 'Remove' : '\u25A0 Stop'));
+  acts.append(el('button', {class: 'btn sm', onclick: () => { selectJob(j.id); openConsole(true); }}, 'Log'));
+  return el('div', {class: 'qrow ' + j.status}, el('div', {class: 'ic'}, icon),
+    el('div', {style: 'min-width:0'}, el('div', {class: 't'}, j.label), el('div', {class: 's'}, sub)), pr, acts);
+}
+function renderQueue() {
+  if (state.tab !== 'queue') { updateQBadge(); return; }
+  const js = [...state.jobs.values()];
+  const running = js.filter(j => j.status === 'running').sort((a, b) => a.started - b.started);
+  const queued = js.filter(j => j.status === 'queued').sort((a, b) => a.position - b.position);
+  const done = js.filter(j => !['running', 'queued'].includes(j.status)).sort((a, b) => (b.ended || 0) - (a.ended || 0)).slice(0, 15);
+  const box = $('#qList'); box.replaceChildren();
+  const sec = (t, arr) => { if (arr.length) { box.append(el('div', {class: 'sep'}, `${t} (${arr.length})`)); arr.forEach(j => box.append(qRow(j))); } };
+  sec('Running', running); sec('Queued', queued); sec('Recent', done);
+  if (!js.length) box.append(el('div', {class: 'hint'}, 'Nothing here yet. Start a download or an auto-scan and it will show up.'));
+  const q = state.queue;
+  $('#qConc').value = String(q.max_concurrent);
+  const pb = $('#qPause'); pb.classList.toggle('on', !!q.paused);
+  pb.textContent = q.paused ? '\u25B6 Resume queue' : '\u275A\u275A Pause queue';
+  $('#qInfo').textContent = `${q.running || 0} running \u00B7 ${q.queued || 0} queued` + (q.paused ? ' \u00B7 paused' : '');
+  updateQBadge();
+}
+function updateQBadge() {
+  const n = [...state.jobs.values()].filter(j => j.status === 'running' || j.status === 'queued').length;
+  $('#qBadge').textContent = n ? String(n) : '';
+}
+function paintQueueProgress() {
+  state.jobs.forEach(j => {
+    const p = j.progress; if (!p || j.status !== 'running') return;
+    const pct = p.total ? Math.round(100 * p.done / p.total) : 0;
+    const b = $(`[data-pb="${j.id}"]`), t = $(`[data-pt="${j.id}"]`);
+    if (b) b.style.width = pct + '%';
+    if (t) t.textContent = `${pct}% \u00B7 ${p.done}/${p.total} seg \u00B7 ${fmtBytes(p.bps)}/s \u00B7 ${etaFor(j)}`;
+  });
+}
+$('#qConc').onchange = guard(async () => { state.queue = await api('/queue', {method: 'PUT', body: JSON.stringify({max_concurrent: +$('#qConc').value})}); renderQueue(); });
+$('#qPause').onclick = guard(async () => { state.queue = await api('/queue', {method: 'PUT', body: JSON.stringify({paused: !state.queue.paused})}); renderQueue(); });
+$('#qClear').onclick = guard(async () => { const r = await api('/queue', {method: 'DELETE'}); toast(`Removed ${r.cancelled} queued job(s)`); });
+
+/* ---------- calendar ---------- */
+const loadCalendar = guard(async () => {
+  const c = await api('/calendar?days=' + $('#calDays').value);
+  const now = Date.now();
+  const nextBox = $('#calNext'); nextBox.replaceChildren();
+  const grid = $('#calGrid'); grid.replaceChildren();
+  $('#calNote').textContent = c.unscheduled ? `${c.unscheduled} releasing series have no schedule yet \u2014 click \u201CRefresh schedule\u201D.` : '';
+  if (!c.items.length) { grid.append(el('div', {class: 'empty'}, 'No upcoming episodes. Click \u201CRefresh schedule\u201D to fetch air times for your tracked series.')); return; }
+  const upcoming = c.items.filter(i => Date.parse(i.air_at) > now).slice(0, 3);
+  if (upcoming.length) nextBox.append(el('div', {class: 'stats'}, upcoming.map(i =>
+    el('div', {class: 'stat'}, el('b', {style: 'font-size:20px'}, 'in ' + fmtIn(Date.parse(i.air_at) - now)),
+      el('span', {}, `${i.title} \u00B7 EP ${epStr(i.episode)}`)))));
+  const byDay = new Map();
+  c.items.forEach(i => { const d = new Date(i.air_at), k = d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); if (!byDay.has(k)) byDay.set(k, {d, items: []}); byDay.get(k).items.push(i); });
+  const today = new Date(); const tk = today.getFullYear() + '-' + today.getMonth() + '-' + today.getDate();
+  const tom = new Date(now + 864e5); const tmk = tom.getFullYear() + '-' + tom.getMonth() + '-' + tom.getDate();
+  byDay.forEach((g, k) => {
+    const name = k === tk ? 'Today' : k === tmk ? 'Tomorrow' : g.d.toLocaleDateString(undefined, {weekday: 'long'});
+    const day = el('div', {class: 'day' + (k === tk ? ' today' : '')},
+      el('h5', {}, name, el('span', {}, g.d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'}))));
+    g.items.forEach(i => {
+      const img = el('img', {alt: '', loading: 'lazy'}); if (i.poster) img.src = i.poster;
+      const at = new Date(i.air_at), ms = at - now;
+      day.append(el('div', {class: 'ev', onclick: () => { const s = state.series.find(x => x.anime_id === i.anime_id); if (s) openDetail(s); }}, img,
+        el('div', {class: 'i'}, el('div', {class: 'n', title: i.title}, i.title),
+          el('div', {class: 'm'}, `EP ${epStr(i.episode)} \u00B7 ${at.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})} \u00B7 ${ms > 0 ? 'in ' + fmtIn(ms) : 'aired'}`)),
+        el('div', {class: 'row', style: 'flex-direction:column;align-items:flex-end;gap:3px'},
+          i.downloaded ? el('span', {class: 'tag ok'}, 'HAVE') : null,
+          i.projected ? el('span', {class: 'tag proj', title: 'Estimated: assumes weekly releases'}, '~EST') : null)));
+    });
+    grid.append(day);
+  });
+});
+$('#calDays').onchange = loadCalendar;
+$('#calRefresh').onclick = guard(async () => { const j = await post('/calendar/refresh'); toast('Refreshing schedule\u2026'); selectJob(j.id); openConsole(true); });
+
+/* ---------- stats page ---------- */
+const loadStats2 = guard(async () => {
+  const days = +$('#stDays').value;
+  const [d, hist] = await Promise.all([api('/stats/detail?days=' + days), api('/history?limit=50')]);
+  const cards = $('#stCards'); cards.replaceChildren();
+  const card = (k, v, sm) => cards.append(el('div', {class: 'stat'}, el('b', {}, v), el('span', {}, k), sm ? el('small', {}, sm) : null));
+  card('Episodes logged', String(d.total_episodes), `${d.week_episodes} in the last 7 days`);
+  card('Downloaded', fmtBytes(d.total_bytes), `${fmtBytes(d.week_bytes)} in the last 7 days`);
+  card('Avg speed', d.avg_speed_bps ? fmtBytes(d.avg_speed_bps) + '/s' : '\u2014', 'total bytes / total download time');
+  card('Time spent', fmtSecs(d.total_seconds), 'pure download time');
+
+  // chart: fill missing days with 0
+  const map = new Map(d.per_day.map(r => [r.day, r])); const chart = $('#stChart'); chart.replaceChildren();
+  const rows = []; const t = new Date(); t.setHours(12, 0, 0, 0);
+  for (let i = days - 1; i >= 0; i--) { const x = new Date(t - i * 864e5); const k = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; rows.push(map.get(k) || {day: k, episodes: 0, bytes: 0}); }
+  const max = Math.max(1, ...rows.map(r => r.episodes));
+  rows.forEach(r => chart.append(el('div', {class: 'c', style: `height:${Math.max(1, 100 * r.episodes / max)}%;opacity:${r.episodes ? 1 : .18}`, title: `${r.day}: ${r.episodes} ep \u00B7 ${fmtBytes(r.bytes)}`})));
+  $('#stAxis').replaceChildren(el('span', {}, rows[0].day), el('span', {}, `peak ${max}/day`), el('span', {}, rows[rows.length - 1].day));
+
+  const disk = $('#stDisk'); disk.replaceChildren();
+  if (d.disk) {
+    const lib = d.disk.library_bytes, used = d.disk.used, tot = d.disk.total;
+    disk.append(el('div', {class: 'bar'}, el('i', {class: 'a', style: `width:${100 * lib / tot}%`, title: 'Library'}), el('i', {class: 'b', style: `width:${100 * Math.max(0, used - lib) / tot}%`, title: 'Other used'})),
+      el('div', {class: 'rowl', style: 'margin-top:10px'}, el('span', {}, '\u25A0 Library (Downloads)'), el('b', {}, fmtBytes(lib))),
+      el('div', {class: 'rowl'}, el('span', {}, 'Used on disk'), el('b', {}, `${fmtBytes(used)} / ${fmtBytes(tot)}`)),
+      el('div', {class: 'rowl'}, el('span', {}, 'Free'), el('b', {style: d.disk.free / tot < .1 ? 'color:var(--err)' : ''}, fmtBytes(d.disk.free))));
+  } else disk.append(el('div', {class: 'hint'}, 'Disk info unavailable.'));
+
+  const cat = $('#stCat'); cat.replaceChildren();
+  d.by_category.forEach(c => cat.append(el('div', {class: 'rowl'}, el('span', {}, c.category), el('b', {}, c.episodes + ' ep'))));
+  if (!d.by_category.length) cat.append(el('div', {class: 'hint'}, 'No data yet.'));
+  const top = $('#stTop'); top.replaceChildren();
+  d.top_series.forEach(s => top.append(el('div', {class: 'rowl'}, el('span', {style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%'}, s.title || s.anime_id), el('b', {}, `${s.episodes} ep \u00B7 ${fmtBytes(s.bytes)}`))));
+
+  const tb = $('#stHist'); tb.replaceChildren();
+  hist.forEach(h => tb.append(el('tr', {}, el('td', {}, h.completed_at), el('td', {title: h.title || ''}, h.title || h.anime_id), el('td', {}, epStr(h.episode)),
+    el('td', {}, h.category || ''), el('td', {}, h.server || ''), el('td', {}, fmtBytes(h.size_bytes)), el('td', {}, fmtSecs(h.duration_s)))));
+  if (!hist.length) tb.append(el('tr', {}, el('td', {colspan: 7, style: 'color:var(--muted);text-align:center;padding:24px'}, 'No downloads recorded yet.')));
+});
+$('#stDays').onchange = loadStats2;
+
+/* ---------- series actions / detail ---------- */
 async function startDownload(s, opts={}) {
-  const j = await api(`/series/${s.anime_id}/download`, {method: 'POST', body: JSON.stringify(opts)});
-  toast('Started: ' + j.label); selectJob(j.id); openConsole(true);
+  const j = await post(`/series/${s.anime_id}/download`, opts);
+  toast(j.status === 'queued' && j.position > 1 ? `Queued (#${j.position}): ${j.label}` : 'Started: ' + j.label); selectJob(j.id); openConsole(true);
 }
 function openDetail(s) {
   const d = $('#detail'); d.replaceChildren();
@@ -249,11 +609,12 @@ function openDetail(s) {
   const forceCk = el('input', {type: 'checkbox'});
   d.append(
     el('h3', {}, s.title || ('ID ' + s.anime_id)),
-    el('div', {class: 'chips'}, el('span', {class: 'chip'}, 'AniList ' + s.anime_id), el('span', {class: 'chip'}, s.status || '—'),
+    el('div', {class: 'chips'}, el('span', {class: 'chip'}, 'AniList ' + s.anime_id), el('span', {class: 'chip'}, s.status || '\u2014'),
+      s.next_airing_at ? el('span', {class: 'chip'}, `EP ${epStr(s.next_airing_ep)} airs ${new Date(s.next_airing_at).toLocaleString()}`) : null,
       ...(s.genres || []).slice(0, 6).map(g => el('span', {class: 'chip'}, g))),
     el('div', {class: 'synopsis'}, (s.synopsis || 'No synopsis.').replace(/<[^>]+>/g, '')),
     el('div', {class: 'meta'}, el('span', {}, 'Last checked: ' + (s.last_checked_at || 'never')), el('span', {}, `Downloaded: ${s.downloaded_eps.join(', ') || 'none'}`.slice(0, 60))),
-    el('div', {class: 'field', style: 'margin-top:14px'}, el('label', {}, 'Mark episodes 1…N as downloaded (fix episode count)'),
+    el('div', {class: 'field', style: 'margin-top:14px'}, el('label', {}, 'Mark episodes 1\u2026N as downloaded (fix episode count)'),
       el('div', {class: 'row'}, epsInput, el('button', {class: 'btn', onclick: guard(async () => {
         await api(`/series/${s.anime_id}/downloaded`, {method: 'PUT', body: JSON.stringify({count: parseInt(epsInput.value || '0', 10)})});
         toast('Episode count updated', 'ok');
@@ -265,57 +626,97 @@ function openDetail(s) {
         })}, 'Download'))),
     el('div', {class: 'actions', style: 'justify-content:space-between;flex-wrap:wrap'},
       el('div', {class: 'row'},
-        el('button', {class: 'btn', onclick: guard(async () => { const j = await api(`/series/${s.anime_id}/refresh`, {method: 'POST'}); selectJob(j.id); openConsole(true); closeModals(); })}, '⟳ Refresh metadata'),
+        el('button', {class: 'btn', onclick: guard(async () => { const j = await post(`/series/${s.anime_id}/refresh`); selectJob(j.id); openConsole(true); closeModals(); })}, '\u27F3 Refresh metadata'),
         el('button', {class: 'btn', onclick: guard(async () => {
           await api('/series/' + s.anime_id, {method: 'PATCH', body: JSON.stringify({is_tracked: !s.is_tracked})});
           toast(s.is_tracked ? 'Untracked' : 'Tracking resumed'); closeModals();
-        })}, s.is_tracked ? '⏸ Untrack' : '▶ Re-track'),
+        })}, s.is_tracked ? '\u23F8 Untrack' : '\u25B6 Re-track'),
         el('button', {class: 'btn danger', onclick: guard(async () => {
           if (!confirm('Permanently delete this series and its history from the DB?')) return;
           await api('/series/' + s.anime_id + '?purge=true', {method: 'DELETE'}); toast('Deleted'); closeModals();
-        })}, '🗑 Delete')),
+        })}, '\uD83D\uDDD1 Delete')),
       el('button', {class: 'btn', onclick: closeModals}, 'Close')));
   $('#mDetail').classList.add('open');
 }
-function closeModals() { document.querySelectorAll('.modal-bg').forEach(m => m.classList.remove('open')); }
-document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', e => { if (e.target === m || e.target.hasAttribute('data-close')) closeModals(); }));
+function closeModals() { $$('.modal-bg').forEach(m => m.classList.remove('open')); }
+$$('.modal-bg').forEach(m => m.addEventListener('click', e => { if (e.target === m || e.target.hasAttribute('data-close')) closeModals(); }));
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModals(); });
 
-$('#btnAdd').onclick = () => { $('#mAdd').classList.add('open'); $('#addQ').focus(); };
-$('#addGo').onclick = guard(async () => {
-  const query = $('#addQ').value.trim(); if (!query) return toast('Enter an ID or URL', 'err');
+/* ---------- search & add ---------- */
+let sTimer, sSeq = 0;
+$('#btnAdd').onclick = () => { $('#mAdd').classList.add('open'); $('#sq').focus(); };
+const looksDirect = q => /^\d+$/.test(q) || /miruro\.[a-z]+\//i.test(q) || /^[A-Za-z0-9_-]{24,}$/.test(q);
+function addQuery(query, btn) {
   const priority = parseInt($('#addP').value || '0', 10);
-  const j = await api('/series', {method: 'POST', body: JSON.stringify({query, priority})});
-  $('#addQ').value = ''; closeModals(); selectJob(j.id); openConsole(true); toast('Adding…');
-});
-$('#addQ').addEventListener('keydown', e => { if (e.key === 'Enter') $('#addGo').click(); });
-const runJob = (path, msg) => guard(async () => { const j = await api(path, {method: 'POST'}); toast(msg); selectJob(j.id); openConsole(true); });
-$('#btnAuto').onclick = runJob('/auto', 'Auto-scan started');
-$('#btnDry').onclick = runJob('/auto?dry_run=true', 'Dry run started');
+  return guard(async () => {
+    if (btn) btn.disabled = true;
+    const j = await post('/series', {query: String(query), priority});
+    toast('Adding\u2026'); selectJob(j.id); openConsole(true);
+    if (btn) btn.textContent = 'Queued \u2714';
+  })();
+}
+function resultRow(r) {
+  const img = el('img', {alt: '', loading: 'lazy'}); if (r.poster) img.src = r.poster;
+  const bits = [r.format, r.year, r.episodes ? r.episodes + ' ep' : null, r.status, r.score ? r.score + '%' : null].filter(Boolean).join(' \u00B7 ');
+  const btn = el('button', {class: 'btn primary sm'}, 'Add');
+  if (r.tracked) { btn.textContent = 'Tracked'; btn.disabled = true; }
+  else if (r.in_db) { btn.textContent = 'Track'; btn.onclick = guard(async () => { await api('/series/' + r.anilist_id, {method: 'PATCH', body: JSON.stringify({is_tracked: true, priority: parseInt($('#addP').value || '0', 10)})}); btn.textContent = 'Tracked'; btn.disabled = true; toast('Tracking resumed', 'ok'); }); }
+  else btn.onclick = () => addQuery(r.anilist_id, btn);
+  const air = r.next_airing_at ? `EP ${r.next_episode} airs in ${fmtIn(r.next_airing_at * 1000 - Date.now())}` : '';
+  return el('div', {class: 'sr'}, img, el('div', {class: 'i'}, el('div', {class: 'n'}, r.title || r.romaji),
+    el('div', {class: 'm'}, bits), air ? el('div', {class: 'm air'}, air) : null, el('div', {class: 'm'}, 'AniList ' + r.anilist_id)), el('div', {class: 'a'}, btn));
+}
+async function runSearch() {
+  const q = $('#sq').value.trim(), box = $('#sres'), seq = ++sSeq;
+  box.replaceChildren();
+  if (!q) { box.append(el('div', {class: 'hint'}, 'Type at least 2 characters to search AniList.')); return; }
+  if (looksDirect(q)) {
+    const b = el('button', {class: 'btn primary'}, 'Add');
+    b.onclick = () => addQuery(q, b);
+    box.append(el('div', {class: 'sr'}, el('div', {class: 'i'}, el('div', {class: 'n'}, /^\d+$/.test(q) ? 'AniList ID ' + q : 'Direct link / UUID'), el('div', {class: 'm'}, q.slice(0, 90))), el('div', {class: 'a'}, b)));
+    return;
+  }
+  if (q.length < 2) { box.append(el('div', {class: 'hint'}, 'Type at least 2 characters.')); return; }
+  box.append(el('div', {class: 'hint'}, 'Searching\u2026'));
+  try {
+    const res = await api('/search?q=' + encodeURIComponent(q));
+    if (seq !== sSeq) return;
+    box.replaceChildren();
+    if (!res.length) box.append(el('div', {class: 'hint'}, 'No results.'));
+    res.forEach(r => box.append(resultRow(r)));
+    box.append(el('div', {class: 'hint'}, 'Brand-new shows may take a day to appear in Miruro\u2019s index \u2014 for those, paste the miruro.bz watch link instead.'));
+  } catch (e) { if (seq === sSeq) { box.replaceChildren(el('div', {class: 'hint', style: 'color:var(--err)'}, e.message)); } }
+}
+$('#sq').addEventListener('input', () => { clearTimeout(sTimer); sTimer = setTimeout(runSearch, 450); });
+$('#sq').addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(sTimer); runSearch(); } });
+
+/* ---------- header buttons / filters ---------- */
+const runJob = (path, msg) => guard(async () => { const j = await post(path); toast(msg); selectJob(j.id); openConsole(true); });
+$('#btnAuto').onclick = runJob('/auto', 'Auto-scan queued');
+$('#btnDry').onclick = runJob('/auto?dry_run=true', 'Dry run queued');
 $('#btnRetry').onclick = runJob('/retry-failed', 'Retrying failed downloads');
 ['q', 'sort', 'statusFilter'].forEach(id => $('#' + id).addEventListener('input', render));
 $('#scope').onchange = refresh;
 
 /* ---------- console / jobs ---------- */
-function openConsole(force) { const c = $('#console'); c.classList.toggle('open', force ?? !c.classList.contains('open')); $('#cArrow').textContent = c.classList.contains('open') ? '▼' : '▲'; }
+function openConsole(force) { const c = $('#console'); c.classList.toggle('open', force ?? !c.classList.contains('open')); $('#cArrow').textContent = c.classList.contains('open') ? '\u25BC' : '\u25B2'; }
 $('#cHead').onclick = e => { if (!e.target.classList.contains('jobchip')) openConsole(); };
 function renderJobs() {
   const box = $('#jobChips'); box.replaceChildren();
-  [...state.jobs.values()].sort((a, b) => b.started - a.started).slice(0, 12).forEach(j => {
+  [...state.jobs.values()].sort((a, b) => b.queued_at - a.queued_at).slice(0, 12).forEach(j => {
     const chip = el('span', {class: `jobchip ${j.status}${j.id === state.selJob ? ' sel' : ''}`, title: j.args.join(' '), onclick: () => { selectJob(j.id); openConsole(true); }}, j.label);
-    if (j.status === 'running') chip.append(el('button', {class: 'btn sm', style: 'margin-left:8px;padding:0 6px', onclick: ev => { ev.stopPropagation(); api('/jobs/' + j.id, {method: 'DELETE'}).catch(x => toast(x.message, 'err')); }}, '■'));
+    if (j.status === 'running' || j.status === 'queued') chip.append(el('button', {class: 'btn sm', style: 'margin-left:8px;padding:0 6px', onclick: ev => { ev.stopPropagation(); api('/jobs/' + j.id, {method: 'DELETE'}).catch(x => toast(x.message, 'err')); }}, '\u25A0'));
     box.append(chip);
   });
+  updateQBadge();
 }
 function appendLine(l) {
   const log = $('#log'); const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
   const m = l.text.match(/^(?:\[.*?\]\s*)?Downloading\s+\[(.*?)\]:/);
   if (m && log.lastElementChild && log.lastElementChild.textContent.includes(`Downloading [${m[1]}]:`)) {
-    log.lastElementChild.textContent = l.text;
-    return;
+    log.lastElementChild.textContent = l.text; return;
   }
-  const d = el('div', {class: l.level}, l.text);
-  log.append(d); while (log.childElementCount > 1500) log.firstChild.remove();
+  log.append(el('div', {class: l.level}, l.text)); while (log.childElementCount > 1500) log.firstChild.remove();
   if (stick) log.scrollTop = log.scrollHeight;
 }
 async function selectJob(id) {
@@ -326,20 +727,30 @@ async function selectJob(id) {
 /* ---------- live feed (SSE) ---------- */
 function connect() {
   const es = new EventSource('/api/events' + (TOKEN ? '?token=' + encodeURIComponent(TOKEN) : ''));
-  const live = on => { $('#dot').classList.toggle('on', on); $('#liveTxt').textContent = on ? 'live' : 'reconnecting…'; };
-  es.addEventListener('hello', () => { live(true); refresh(); });
+  const live = on => { $('#dot').classList.toggle('on', on); $('#liveTxt').textContent = on ? 'live' : 'reconnecting\u2026'; };
+  es.addEventListener('hello', () => { live(true); loadJobsQuiet(); loadTab(); });
   es.onerror = () => live(false);
   es.addEventListener('log', e => { const d = JSON.parse(e.data); if (d.job_id === state.selJob) appendLine(d); });
+  es.addEventListener('queue', e => { state.queue = JSON.parse(e.data); if (state.tab === 'queue') renderQueue(); });
+  es.addEventListener('progress', e => {
+    const d = JSON.parse(e.data), j = state.jobs.get(d.job_id); if (!j) return;
+    j.progress = {done: d.done, total: d.total, bytes: d.bytes, bps: d.bps};
+    raf(paintLive); if (state.tab === 'queue') raf(paintQueueProgress);
+  });
   es.addEventListener('job', e => {
     const j = JSON.parse(e.data); const prev = state.jobs.get(j.id); state.jobs.set(j.id, j);
     if (!state.selJob) state.selJob = j.id;
-    renderJobs();
-    if (prev && prev.status === 'running' && j.status !== 'running')
-      toast(`${j.label}: ${j.status}`, j.status === 'done' ? 'ok' : 'err');
+    renderJobs(); raf(renderQueue); raf(paintLive);
+    if (prev && ['running', 'queued'].includes(prev.status) && !['running', 'queued'].includes(j.status))
+      toast(`${j.label}: ${j.status}`, j.status === 'done' ? 'ok' : j.status === 'failed' ? 'err' : '');
   });
   es.addEventListener('series_changed', refreshSoon);
 }
-(async () => { try { (await api('/jobs')).forEach(j => state.jobs.set(j.id, j)); renderJobs(); } catch {} connect(); })();
+async function loadJobsQuiet() { try { (await api('/jobs')).forEach(j => state.jobs.set(j.id, j)); state.queue = await api('/queue'); renderJobs(); renderQueue(); } catch {} }
+(async () => {
+  const h = location.hash.slice(1); if (['library', 'queue', 'calendar', 'stats'].includes(h)) { state.tab = h; setTab(h); }
+  await loadJobsQuiet(); connect();
+})();
 </script>
 </body>
 </html>

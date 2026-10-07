@@ -540,6 +540,24 @@ def fetch_miruro_id(anilist_id: int) -> str | None:
     return meta["id"] if meta else None
 
 
+def _store_airing(anilist_id: int, meta: dict | None):
+    """Persist the next-airing episode from a Miruro metadata payload (feeds the web calendar)."""
+    try:
+        na = (meta or {}).get("next_airing") or {}
+        db.set_next_airing(anilist_id, na.get("episode_number"), na.get("air_at"))
+    except Exception:
+        pass
+
+
+def _log_download(anilist_id, title, ep_num, category, server, save_path, seconds):
+    """Record a completed download (size, duration, server) for the stats page."""
+    try:
+        size = save_path.stat().st_size if save_path.exists() else 0
+        db.record_download(anilist_id, title, ep_num, category, server or "", size, seconds)
+    except Exception:
+        pass
+
+
 def fetch_v1_episodes(miruro_id: str) -> list | None:
     data = api_v1_request(f"anime/{miruro_id}/episodes", {"limit": 10000})
     if data and "data" in data:
@@ -935,6 +953,7 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
             elapsed = t1 - t0
             time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
             print(f"    {C.GREEN}✔{C.RESET} Downloaded EP {ep_num} successfully in {time_str}.")
+            _log_download(anilist_id, title, ep_num, target_cat, winner.get("server_name"), save_path, elapsed)
 
             subs = winner.get("subtitles") or []
             if subs:
@@ -967,6 +986,7 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
                 elapsed = t1_fb - t0_fb
                 time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
                 print(f"    {C.GREEN}✔{C.RESET} Downloaded EP {ep_num} successfully in {time_str}.")
+                _log_download(anilist_id, title, ep_num, target_cat, server_name, save_path, elapsed)
 
                 # Use global_subs (same across all streams) for subtitle download
                 global_subs = winner.get("subtitles") or subs
@@ -998,6 +1018,7 @@ def process_series(anilist_id, target_eps=None, provider="hop", category="dub", 
         return
         
     miruro_id = meta["id"]
+    _store_airing(anilist_id, meta)
     dub_count = meta.get("episode_counts", {}).get("dub") or 0
     sub_count = meta.get("episode_counts", {}).get("sub") or 0
         
@@ -1104,6 +1125,7 @@ def probe_worker_auto(s, provider, category, quality, upgrade_dubs):
         return {"anime_id": anilist_id, "title": title, "eps_to_dl": [], "error": "Could not map ID"}
         
     miruro_id = meta["id"]
+    _store_airing(anilist_id, meta)
     counts = meta.get("episode_counts", {})
     raw_count = counts.get("raw") or 0
     dub_count = counts.get("dub") or 0
@@ -1258,6 +1280,7 @@ def main():
     parser.add_argument("--upgrade-dubs", action="store_true", help="Check for dubs of previously downloaded sub episodes and replace them")
     parser.add_argument("--subtitles-only", action="store_true", help="Only download subtitle files (VTT/ASS), skip video streams")
     parser.add_argument("--test-subs", nargs=2, metavar=("MIRURO_UUID", "EP_NUM"), help="Debug: probe and download subtitle for one episode without downloading video. e.g. --test-subs EHT-j9hg7K6M__5XDixVgMh9rKe6Nwcz 1")
+    parser.add_argument("--refresh-airing", action="store_true", help="Refresh next-airing info for all tracked series (feeds the web calendar)")
     parser.add_argument("--dry-run", action="store_true", help="Probe and show what would be downloaded without actually downloading")
     parser.add_argument("--debug", action="store_true", help="Enable verbose tracing for HTTP requests")
     parser.add_argument("--priority", type=int, default=None, help="Set priority for the tracked series (higher number = downloaded first during --auto)")
@@ -1388,6 +1411,26 @@ def main():
         for ok, prov, url, msg in results:
             sym = f"{C.GREEN}✔{C.RESET}" if ok else f"{C.RED}✘{C.RESET}"
             print(f"  {sym} [{prov}] {msg}")
+        return
+
+    if args.refresh_airing:
+        tracked = db.get_tracked_series()
+        print(f"\n{C.BLUE}◆{C.RESET} Refreshing airing schedule for {len(tracked)} series...")
+        n_ok = 0
+        for s_ in tracked:
+            try:
+                m_ = fetch_miruro_metadata(s_["anime_id"])
+                if m_:
+                    _store_airing(s_["anime_id"], m_)
+                    na_ = m_.get("next_airing") or {}
+                    n_ok += 1
+                    if na_.get("air_at"):
+                        print(f"  {C.GREEN}✔{C.RESET} {s_['title']}: EP {na_.get('episode_number')} @ {na_['air_at']}")
+                else:
+                    print(f"  {C.YELLOW}⚠{C.RESET} {s_['title']}: metadata unavailable")
+            except Exception as e_:
+                print(f"  {C.RED}✘{C.RESET} {s_['title']}: {e_}")
+        print(f"{C.GREEN}✔{C.RESET} Airing info refreshed for {n_ok}/{len(tracked)} series.")
         return
 
     if args.list_tracked:

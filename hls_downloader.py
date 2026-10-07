@@ -5,6 +5,7 @@
 #              AES-128 decryption, live tqdm progress, and fail-fast abort.
 # ==============================================================================
 
+import json
 import os
 import re
 import sys
@@ -42,6 +43,26 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 from curl_cffi import requests
 from config import cfg
+
+# When launched by the web manager, emit structured progress instead of a tqdm bar.
+_JSON_PROGRESS = os.environ.get("MIRURO_JSON_PROGRESS") == "1"
+_progress_last = 0.0
+
+
+def _emit_progress(done, total, stats, force=False):
+    """Print a throttled `@@PROGRESS {json}` line (max ~4/s) for the manager server to parse."""
+    global _progress_last
+    now = time.monotonic()
+    if not force and now - _progress_last < 0.25:
+        return
+    _progress_last = now
+    try:
+        elapsed = max(time.time() - stats.start_time, 1e-6)
+        bps = stats.total_bytes / elapsed
+        print("@@PROGRESS " + json.dumps({"done": done, "total": total,
+              "bytes": stats.total_bytes, "bps": int(bps)}), flush=True)
+    except Exception:
+        pass
 from pathlib import Path
 
 _global_sem = threading.Semaphore(cfg.max_outbound_connections)
@@ -618,7 +639,7 @@ def download_hls(
     remaining = [(i, url) for i, url in enumerate(segment_urls) if i not in downloaded]
 
     pbar = None
-    if TQDM_AVAILABLE:
+    if TQDM_AVAILABLE and not _JSON_PROGRESS:
         srv_name = ""
         if _preprobed and "server_name" in _preprobed:
             srv_name = f" [{_preprobed['server_name']}]"
@@ -662,6 +683,8 @@ def download_hls(
                     if pbar:
                         pbar.set_postfix_str(f"Speed: {stats.get_speed_string()}")
                         pbar.update(1)
+                    elif _JSON_PROGRESS:
+                        _emit_progress(len(downloaded), total, stats)
                     else:
                         done = len(downloaded)
                         pct = (done / total) * 100
@@ -694,7 +717,9 @@ def download_hls(
     if pbar:
         pbar.close()
     pbar = None
-    if not TQDM_AVAILABLE:
+    if _JSON_PROGRESS:
+        _emit_progress(len(downloaded), total, stats, force=True)
+    elif not TQDM_AVAILABLE:
         print()
 
     # ---- Assemble TS -------------------------------------------------------
