@@ -1,43 +1,71 @@
-# Miruro Custom CLI Downloader
+<div align="center">
 
-An advanced, autonomous CLI tool for batch downloading anime streams from Miruro and its providers. Features automatic background tracking, Cloudflare bypass, multi-provider HLS chunk racing, database synchronization, and local media management.
+# 🎬 Miruro Custom CLI
+
+### An autonomous anime downloader for Miruro and its providers
+
+Automatic tracking · Cloudflare bypass · multi-provider HLS racing · local library management
+
+<br>
+
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FFmpeg](https://img.shields.io/badge/FFmpeg-required-007808?style=for-the-badge&logo=ffmpeg&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-local%20DB-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
+
+<br>
+
+[Features](#-features) · [Installation](#-installation) · [Quick Start](#-quick-start) · [CLI Reference](#-cli-reference) · [Web Manager](#-web-manager) · [Advanced](#-advanced-features)
+
+</div>
+
+---
 
 ## ✨ Features
 
-- **Automated Tracking (`--auto`)**: Add your favorite series and the CLI will periodically probe and seamlessly download newly aired episodes as they become available.
-- **Stealth Cloudflare Bypass**: Automatically spins up headless browser sessions to solve and cache Cloudflare challenges when the API blocks requests.
-- **HLS Chunk Racing Engine**: Intelligently identifies available streams across multiple CDN providers (Animepahe, Anikoto, Icarus, etc.) and parallelizes downloads.
-- **Strict Quality Filtering**: Built-in resolution logic that parses raw HLS metadata and safely falls back or strictly enforces target resolutions (e.g., locking to 1080p).
-- **Sub/Dub Hierarchy**: Prefer Dubs? The CLI searches for Dubs first and gracefully falls back to Subs if a Dub hasn't aired yet. Upgrade logic (`--upgrade-dubs`) allows swapping Subs with Dubs as they release.
-- **Local SQLite Database**: Persists your download history, tracks watched episodes, and prevents duplicate processing.
+| | Feature | Description |
+|---|---|---|
+| 🤖 | **Automated Tracking** | Add your favorite series with `--auto` and the CLI periodically probes and downloads newly aired episodes. |
+| 🛡️ | **Stealth Cloudflare Bypass** | Spins up headless browser sessions to solve and cache Cloudflare challenges when the API blocks requests. |
+| ⚡ | **HLS Chunk Racing** | Finds streams across multiple CDN providers (Animepahe, Anikoto, Icarus, …) and parallelizes downloads. |
+| 🎯 | **Strict Quality Filtering** | Parses raw HLS metadata to fall back safely, or lock strictly to a target resolution such as 1080p. |
+| 🔊 | **Sub/Dub Hierarchy** | Prefers dubs, falls back to subs if a dub hasn't aired, and can upgrade subs to dubs later with `--upgrade-dubs`. |
+| 🗄️ | **Local SQLite Database** | Persists download history, tracks watched episodes, and prevents duplicate processing. |
+| 🖥️ | **Web Manager** | Dashboard with library grid, queue, airing calendar, stats, and a live console. |
+
+---
 
 ## 🚀 Installation
 
 ### Prerequisites
-- Python 3.10+
-- `ffmpeg` installed and added to your system `PATH` (crucial for stitching HLS streams together)
-- (Optional but recommended) Google Chrome or Chromium (used by `curl_cffi` for advanced TLS fingerprint spoofing and Cloudflare bypass)
+
+- **Python 3.10+**
+- **`ffmpeg`** installed and on your system `PATH` (required to stitch HLS streams together)
+- *(Optional, recommended)* **Google Chrome or Chromium**, used by `curl_cffi` for TLS fingerprint spoofing and Cloudflare bypass
 
 ### Setup
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/Varun-Thete/miruro-custom-cli.git
-   cd miruro-custom-cli
-   ```
-2. Create and activate a virtual environment:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
 
-## 📚 Usage
+```bash
+# 1. Clone the repository
+git clone https://github.com/Varun-Thete/miruro-custom-cli.git
+cd miruro-custom-cli
 
-### 1. Add Series to Tracking
-Use the AniList ID, a raw Miruro UUID, or a direct Miruro watch/anime URL to add a series to your local database.
+# 2. Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+
+# 3. Install dependencies
+pip install -r requirements.txt
+```
+
+---
+
+## ⚡ Quick Start
+
+### 1️⃣ Add a series to tracking
+
+Use an AniList ID, a raw Miruro UUID, or a direct Miruro watch/anime URL.
+
 ```bash
 # By AniList ID
 python downloader.py --add 163142
@@ -45,150 +73,168 @@ python downloader.py --add 163142
 # By direct Miruro URL
 python downloader.py --add "https://www.miruro.bz/watch/yu-vVgTCWNdDu1JNx2FRonr3tqK71f0z/black-clover-season-2?ep=1"
 
-# With a specific priority (higher priority series are downloaded first during --auto)
+# With a priority (higher priority is downloaded first during --auto)
 python downloader.py --add 163142 --priority 100
 ```
-*Note: The CLI proactively queries the Miruro API to map URLs and UUIDs seamlessly to their AniList IDs.*
 
-### 2. Auto-Download New Episodes
-Probe all tracked series in your database, fetch schedules, and download any missing episodes natively to your `Downloads` folder:
+> [!NOTE]
+> The CLI queries the Miruro API to map URLs and UUIDs to their AniList IDs automatically.
+
+### 2️⃣ Auto-download new episodes
+
+Probe every tracked series, fetch schedules, and download missing episodes to your `Downloads` folder.
+
 ```bash
 python downloader.py --auto
 ```
 
-### 3. Download a Single Series
-Target one specific series for a manual one-off download without running a full database auto-scan. Use this when you only want to process a single show:
+### 3️⃣ Download a single series
+
+Target one specific series for a manual one-off download, without running a full database auto-scan. Use this when you only want to process a single show.
+
 ```bash
 python downloader.py -l 163142
 ```
 
-### 4. Target Specific Qualities
-Lock downloads to 1080p specifically:
+**Variations**
+
+```bash
+# By Miruro URL instead of an AniList ID
+python downloader.py -l "https://www.miruro.bz/watch/yu-vVgTCWNdDu1JNx2FRonr3tqK71f0z/black-clover-season-2?ep=1"
+
+# Specific episode, or a range
+python downloader.py -l 163142 -e 1
+python downloader.py -l 163142 -e 3-5
+
+# Redownload an episode that's already marked as downloaded
+python downloader.py -l 163142 -e 1 --force
+
+# Choose audio category (default is dub, falling back to sub)
+python downloader.py -l 163142 -c sub
+
+# Lock to a resolution
+python downloader.py -l 163142 -q 1080
+
+# Use one provider instead of racing all of them
+python downloader.py -l 163142 -p yuki
+
+# Combine options: episodes 3-5, sub, 1080p
+python downloader.py -l 163142 -e 3-5 -c sub -q 1080
+
+# Subtitles only (skip the video)
+python downloader.py -l 163142 --subtitles-only
+
+# Preview what would be downloaded without writing files
+python downloader.py -l 163142 --dry-run
+```
+
+### 4️⃣ Target a specific quality
+
 ```bash
 python downloader.py --auto -q 1080
 ```
 
-### 5. Advanced Management
-- **List tracked series:**
-  ```bash
-  python downloader.py --list-tracked
-  ```
-- **Untrack/Remove a series:**
-  ```bash
-  python downloader.py --remove 163142
-  ```
-- **Retry failed downloads:**
-  ```bash
-  python downloader.py --retry-failed
-  ```
-- **Mark an episode as downloaded manually:**
-  ```bash
-  python downloader.py --rec 163142 5
-  ```
-- **Update priority for an existing series:**
-  ```bash
-  python downloader.py --add 163142 --priority 50
-  ```
+### 5️⃣ Manage your library
 
-### Command Line Arguments Reference
+```bash
+python downloader.py --list-tracked          # List tracked series
+python downloader.py --remove 163142         # Untrack a series
+python downloader.py --retry-failed          # Retry failed downloads
+python downloader.py --rec 163142 5          # Mark 5 episodes as downloaded
+python downloader.py --add 163142 --priority 50   # Update priority
+```
 
-Below is a detailed list of every argument and feature available in `downloader.py`:
+---
 
-#### Database & Tracking
-- **`--add <ID_OR_URL> [ID_OR_URL...]`**
-  Adds one or more series to your tracking database. You can pass pure AniList IDs, Miruro UUIDs, or full `miruro.bz` watch links.
-  *Usage:* `python downloader.py --add 163142`
-- **`--priority <INT>`**
-  Assigns a priority score to a series when adding or updating. Higher numbers get probed and downloaded first during `--auto`.
-  *Usage:* `python downloader.py --add 163142 --priority 100`
-- **`--untrack`**
-  Removes a series from tracking when combined with `--link`.
-  *Usage:* `python downloader.py -l 163142 --untrack`
-- **`--remove <ID_OR_NAME>`**
-  Alias to untrack, but accepts partial title matches or IDs directly.
-  *Usage:* `python downloader.py --remove "Frieren"`
-- **`--list-tracked`**
-  Prints a list of all currently tracked series and their IDs.
-  *Usage:* `python downloader.py --list-tracked`
-- **`--rec <ID_OR_NAME> <COUNT>`**
-  Manually mark `<COUNT>` episodes as downloaded in the database to prevent the script from downloading them.
-  *Usage:* `python downloader.py --rec "Frieren" 5`
+## 📖 CLI Reference
 
-#### Downloading Operations
-- **`-l, --link <ID_OR_URL>`**
-  Target a specific series for a manual one-off download. If omitted, you must use `--auto` to process everything.
-  *Usage:* `python downloader.py -l 163142`
-- **`-a, --auto`**
-  Probe all tracked series in your database for new episodes and download them automatically.
-  *Usage:* `python downloader.py --auto`
-- **`-e, --episodes <RANGE>`**
-  Target specific episodes instead of all un-downloaded ones. Supports single numbers and ranges.
-  *Usage:* `python downloader.py -l 163142 -e 1` or `... -e 3-5`
-- **`-f, --force`**
-  Force redownload an episode even if it is already marked as downloaded in the local database.
-  *Usage:* `python downloader.py -l 163142 -e 1 --force`
-- **`--retry-failed`**
-  Re-attempts to download any episodes that previously failed (due to network drops, missing chunks, etc.).
-  *Usage:* `python downloader.py --retry-failed`
+Every argument available in `downloader.py`.
 
-#### Filtering & Preferences
-- **`-c, --category <sub|dub|raw>`**
-  Specify the preferred audio category. Default is `dub` (which safely falls back to `sub` if a dub isn't aired yet).
-  *Usage:* `python downloader.py --auto -c sub`
-- **`-q, --quality <HEIGHT>`**
-  Target resolution height. The CLI evaluates raw `.m3u8` playlists to strictly enforce this.
-  *Usage:* `python downloader.py --auto -q 1080`
-- **`-p, --provider <NAME>`**
-  Target a specific CDN provider (e.g., `hop`, `yuki`, `alpha`). Default is `all`, which races available streams.
-  *Usage:* `python downloader.py -l 163142 -p yuki`
-- **`--upgrade-dubs`**
-  Scan your library for series where you previously downloaded the `sub` (because the dub wasn't out), check if the `dub` is now available, and replace the file.
-  *Usage:* `python downloader.py --auto --upgrade-dubs`
-- **`--subtitles-only`**
-  Download only the subtitle files (`.vtt`/`.ass`) and skip the heavy video streams. Great for extracting subs.
-  *Usage:* `python downloader.py -l 163142 --subtitles-only`
+### 🗂️ Database & Tracking
 
-#### Utilities & Debugging
-- **`--refresh-airing`**
-  Fetch the latest airing schedule (next episode release date/time) for all tracked series and update the local database. Used to populate the Web Manager Calendar.
-  *Usage:* `python downloader.py --refresh-airing`
-- **`--rehash` / `--rehash-all`**
-  Re-download missing metadata images (posters/backgrounds) for a specific series (requires `-l`) or all series.
-  *Usage:* `python downloader.py --rehash-all`
-- **`--force-images`**
-  Combine with rehash flags to overwrite existing posters/backgrounds instead of only grabbing missing ones.
-- **`--dry-run`**
-  Probe the API and database to show exactly what *would* be downloaded, without actually writing any files.
-  *Usage:* `python downloader.py --auto --dry-run`
-- **`--debug`**
-  Enable verbose printing of HTTP requests and raw API responses for troubleshooting.
-- **`--test-subs <UUID> <EP_NUM>`**
-  Developer flag to probe and fetch subtitle tracks for a single episode without touching the video.
+| Argument | Description | Example |
+|---|---|---|
+| `--add <ID_OR_URL> [...]` | Add one or more series (AniList IDs, Miruro UUIDs, or `miruro.bz` watch links). | `--add 163142` |
+| `--priority <INT>` | Priority score when adding/updating. Higher gets probed and downloaded first in `--auto`. | `--add 163142 --priority 100` |
+| `--untrack` | Remove a series from tracking when combined with `--link`. | `-l 163142 --untrack` |
+| `--remove <ID_OR_NAME>` | Alias to untrack. Accepts IDs or partial title matches. | `--remove "Frieren"` |
+| `--list-tracked` | Print all tracked series and their IDs. | `--list-tracked` |
+| `--rec <ID_OR_NAME> <COUNT>` | Manually mark `<COUNT>` episodes as downloaded so they are skipped. | `--rec "Frieren" 5` |
 
-### 5. Web Manager (Dashboard)
-A modern web UI to manage your tracked series: Library grid, Queue system, Airing Calendar, Download Stats, bulk selection actions, and a **live console** streaming job output over Server-Sent Events.
+### ⬇️ Downloading
 
-**Server Arguments & Environment Variables:**
-- **`--host <IP>`**
-  The interface to bind the server to. Default is `0.0.0.0` (accessible from any device on your local network). Use `127.0.0.1` to restrict access strictly to the local machine.
-  *Usage:* `python manager_server.py --host 127.0.0.1`
-- **`--port <PORT>`**
-  The port to run the web server on. Default is `5300`.
-  *Usage:* `python manager_server.py --port 8080`
-- **`--max-jobs <INT>`**
-  The maximum number of background downloader processes allowed to run simultaneously in the queue. Default is `1` (prevents bandwidth congestion).
-  *Usage:* `python manager_server.py --max-jobs 2`
-- **`MIRURO_UI_TOKEN` (Environment Variable)**
-  Since the server binds to the local network (`0.0.0.0`) by default, anyone on your network can access it. Set this variable to secure the UI behind a token. You will then access it via `http://<server-ip>:5300/?token=secret`.
-  *Usage:* `MIRURO_UI_TOKEN=secret python manager_server.py`
+| Argument | Description | Example |
+|---|---|---|
+| `-l`, `--link <ID_OR_URL>` | Target one series for a manual one-off download. Omit it and use `--auto` to process everything. | `-l 163142` |
+| `-a`, `--auto` | Probe all tracked series and download new episodes. | `--auto` |
+| `-e`, `--episodes <RANGE>` | Target specific episodes (single numbers or ranges). | `-l 163142 -e 3-5` |
+| `-f`, `--force` | Redownload even if already marked as downloaded. | `-l 163142 -e 1 --force` |
+| `--retry-failed` | Retry episodes that failed (network drops, missing chunks, …). | `--retry-failed` |
 
-## 🛠 Advanced Features
+### 🎛️ Filtering & Preferences
 
-### Smart Stream Resolution Filtering
-Providers sometimes obscure video resolutions, labeling 720p streams identically to 1080p within their JSON endpoints. This CLI parses `.m3u8` master playlists, dynamically evaluates heights, and safely defaults to `0` (Unknown) for streams lacking metadata, ensuring you never accidentally downgrade quality while racing servers.
+| Argument | Description | Example |
+|---|---|---|
+| `-c`, `--category <sub\|dub\|raw>` | Preferred audio category. Default is `dub`, falling back to `sub` if no dub has aired. | `--auto -c sub` |
+| `-q`, `--quality <HEIGHT>` | Target resolution height, strictly enforced by evaluating raw `.m3u8` playlists. | `--auto -q 1080` |
+| `-p`, `--provider <NAME>` | Target a specific CDN provider (e.g. `hop`, `yuki`, `alpha`). Default is `all`, which races available streams. | `-l 163142 -p yuki` |
+| `--upgrade-dubs` | Find series where you downloaded the `sub` because the dub wasn't out, check if the `dub` exists now, and replace the file. | `--auto --upgrade-dubs` |
+| `--subtitles-only` | Download only subtitle files (`.vtt`/`.ass`) and skip the video. | `-l 163142 --subtitles-only` |
+
+### 🧰 Utilities & Debugging
+
+| Argument | Description | Example |
+|---|---|---|
+| `--refresh-airing` | Fetch the latest airing schedule for tracked series and update the database. Populates the Web Manager calendar. | `--refresh-airing` |
+| `--rehash` / `--rehash-all` | Re-download missing metadata images (posters/backgrounds) for one series (requires `-l`) or all series. | `--rehash-all` |
+| `--force-images` | Combine with rehash flags to overwrite existing images instead of only grabbing missing ones. | `--rehash-all --force-images` |
+| `--dry-run` | Show what *would* be downloaded without writing any files. | `--auto --dry-run` |
+| `--debug` | Verbose output of HTTP requests and raw API responses. | `--debug` |
+| `--test-subs <UUID> <EP_NUM>` | Developer flag: probe and fetch subtitle tracks for one episode without touching the video. | `--test-subs <UUID> 1` |
+
+---
+
+## 🖥️ Web Manager
+
+A modern web UI for managing your tracked series:
+
+- 📚 Library grid
+- 📋 Queue system
+- 📅 Airing calendar
+- 📊 Download stats
+- ✅ Bulk selection actions
+- 📟 **Live console** streaming job output over Server-Sent Events
+
+```bash
+python manager_server.py
+```
+
+### Server options
+
+| Option | Default | Description | Example |
+|---|---|---|---|
+| `--host <IP>` | `0.0.0.0` | Interface to bind to. `0.0.0.0` is reachable from your whole local network; use `127.0.0.1` to restrict it to this machine. | `python manager_server.py --host 127.0.0.1` |
+| `--port <PORT>` | `5300` | Port for the web server. | `python manager_server.py --port 8080` |
+| `--max-jobs <INT>` | `1` | Max simultaneous background downloader processes in the queue. Keeping it at 1 prevents bandwidth congestion. | `python manager_server.py --max-jobs 2` |
+| `MIRURO_UI_TOKEN` *(env var)* | none | Secures the UI behind a token. Access it at `http://<server-ip>:5300/?token=secret`. | `MIRURO_UI_TOKEN=secret python manager_server.py` |
+
+> [!WARNING]
+> The server binds to `0.0.0.0` by default, so anyone on your network can reach it. Set `MIRURO_UI_TOKEN` or bind to `127.0.0.1` if that isn't what you want.
+
+---
+
+## 🛠️ Advanced Features
+
+### Smart stream resolution filtering
+
+Providers sometimes obscure video resolutions, labeling 720p streams the same as 1080p in their JSON endpoints. The CLI parses `.m3u8` master playlists, evaluates the real heights, and defaults to `0` (Unknown) for streams lacking metadata, so you never accidentally downgrade quality while racing servers.
+
+---
 
 ## 🤝 Contributing
-Contributions, issues, and feature requests are welcome!
+
+Contributions, issues, and feature requests are welcome! Feel free to open an issue or submit a pull request.
 
 ## 📝 License
-This project is licensed under the MIT License.
+
+This project is licensed under the **MIT License**.
