@@ -21,7 +21,7 @@ An advanced, autonomous CLI tool for batch downloading anime streams from Miruro
 ### Setup
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/miruro-custom-cli.git
+   git clone https://github.com/Varun-Thete/miruro-custom-cli.git
    cd miruro-custom-cli
    ```
 2. Create and activate a virtual environment:
