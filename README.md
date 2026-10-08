@@ -84,6 +84,81 @@ python downloader.py --auto -q 1080
   python downloader.py --add 163142 --priority 50
   ```
 
+### Command Line Arguments Reference
+
+Below is a detailed list of every argument and feature available in `downloader.py`:
+
+#### Database & Tracking
+- **`--add <ID_OR_URL> [ID_OR_URL...]`**
+  Adds one or more series to your tracking database. You can pass pure AniList IDs, Miruro UUIDs, or full `miruro.bz` watch links.
+  *Usage:* `python downloader.py --add 163142`
+- **`--priority <INT>`**
+  Assigns a priority score to a series when adding or updating. Higher numbers get probed and downloaded first during `--auto`.
+  *Usage:* `python downloader.py --add 163142 --priority 100`
+- **`--untrack`**
+  Removes a series from tracking when combined with `--link`.
+  *Usage:* `python downloader.py -l 163142 --untrack`
+- **`--remove <ID_OR_NAME>`**
+  Alias to untrack, but accepts partial title matches or IDs directly.
+  *Usage:* `python downloader.py --remove "Frieren"`
+- **`--list-tracked`**
+  Prints a list of all currently tracked series and their IDs.
+  *Usage:* `python downloader.py --list-tracked`
+- **`--rec <ID_OR_NAME> <COUNT>`**
+  Manually mark `<COUNT>` episodes as downloaded in the database to prevent the script from downloading them.
+  *Usage:* `python downloader.py --rec "Frieren" 5`
+
+#### Downloading Operations
+- **`-l, --link <ID_OR_URL>`**
+  Target a specific series for a manual one-off download. If omitted, you must use `--auto` to process everything.
+  *Usage:* `python downloader.py -l 163142`
+- **`-a, --auto`**
+  Probe all tracked series in your database for new episodes and download them automatically.
+  *Usage:* `python downloader.py --auto`
+- **`-e, --episodes <RANGE>`**
+  Target specific episodes instead of all un-downloaded ones. Supports single numbers and ranges.
+  *Usage:* `python downloader.py -l 163142 -e 1` or `... -e 3-5`
+- **`-f, --force`**
+  Force redownload an episode even if it is already marked as downloaded in the local database.
+  *Usage:* `python downloader.py -l 163142 -e 1 --force`
+- **`--retry-failed`**
+  Re-attempts to download any episodes that previously failed (due to network drops, missing chunks, etc.).
+  *Usage:* `python downloader.py --retry-failed`
+
+#### Filtering & Preferences
+- **`-c, --category <sub|dub|raw>`**
+  Specify the preferred audio category. Default is `dub` (which safely falls back to `sub` if a dub isn't aired yet).
+  *Usage:* `python downloader.py --auto -c sub`
+- **`-q, --quality <HEIGHT>`**
+  Target resolution height. The CLI evaluates raw `.m3u8` playlists to strictly enforce this.
+  *Usage:* `python downloader.py --auto -q 1080`
+- **`-p, --provider <NAME>`**
+  Target a specific CDN provider (e.g., `hop`, `yuki`, `alpha`). Default is `all`, which races available streams.
+  *Usage:* `python downloader.py -l 163142 -p yuki`
+- **`--upgrade-dubs`**
+  Scan your library for series where you previously downloaded the `sub` (because the dub wasn't out), check if the `dub` is now available, and replace the file.
+  *Usage:* `python downloader.py --auto --upgrade-dubs`
+- **`--subtitles-only`**
+  Download only the subtitle files (`.vtt`/`.ass`) and skip the heavy video streams. Great for extracting subs.
+  *Usage:* `python downloader.py -l 163142 --subtitles-only`
+
+#### Utilities & Debugging
+- **`--refresh-airing`**
+  Fetch the latest airing schedule (next episode release date/time) for all tracked series and update the local database. Used to populate the Web Manager Calendar.
+  *Usage:* `python downloader.py --refresh-airing`
+- **`--rehash` / `--rehash-all`**
+  Re-download missing metadata images (posters/backgrounds) for a specific series (requires `-l`) or all series.
+  *Usage:* `python downloader.py --rehash-all`
+- **`--force-images`**
+  Combine with rehash flags to overwrite existing posters/backgrounds instead of only grabbing missing ones.
+- **`--dry-run`**
+  Probe the API and database to show exactly what *would* be downloaded, without actually writing any files.
+  *Usage:* `python downloader.py --auto --dry-run`
+- **`--debug`**
+  Enable verbose printing of HTTP requests and raw API responses for troubleshooting.
+- **`--test-subs <UUID> <EP_NUM>`**
+  Developer flag to probe and fetch subtitle tracks for a single episode without touching the video.
+
 ### 5. Web Manager (Dashboard)
 A modern web UI to manage your tracked series: poster grid, priority stepper, add/untrack/delete, fix episode counts, trigger downloads / auto-scan, and a **live console** streaming job output over Server-Sent Events.
 ```bash
