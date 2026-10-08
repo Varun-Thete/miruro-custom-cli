@@ -56,13 +56,19 @@ Probe all tracked series in your database, fetch schedules, and download any mis
 python downloader.py --auto
 ```
 
-### 3. Target Specific Qualities
+### 3. Download a Single Series
+Target one specific series for a manual one-off download without running a full database auto-scan. Use this when you only want to process a single show:
+```bash
+python downloader.py -l 163142
+```
+
+### 4. Target Specific Qualities
 Lock downloads to 1080p specifically:
 ```bash
 python downloader.py --auto -q 1080
 ```
 
-### 4. Advanced Management
+### 5. Advanced Management
 - **List tracked series:**
   ```bash
   python downloader.py --list-tracked
