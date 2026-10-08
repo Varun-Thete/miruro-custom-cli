@@ -160,13 +160,21 @@ Below is a detailed list of every argument and feature available in `downloader.
   Developer flag to probe and fetch subtitle tracks for a single episode without touching the video.
 
 ### 5. Web Manager (Dashboard)
-A modern web UI to manage your tracked series: poster grid, priority stepper, add/untrack/delete, fix episode counts, trigger downloads / auto-scan, and a **live console** streaming job output over Server-Sent Events.
-```bash
-python manager_server.py                 # all interfaces: http://<server-ip>:5300
-python manager_server.py --host 127.0.0.1  # local machine only
-MIRURO_UI_TOKEN=secret python manager_server.py --host 0.0.0.0   # then open /?token=secret
-```
-*Listens on all interfaces by default so it is reachable on your local network (the startup banner prints the exact URL). Set `MIRURO_UI_TOKEN` to require a token, or use `--host 127.0.0.1` to restrict it to this machine.*
+A modern web UI to manage your tracked series: Library grid, Queue system, Airing Calendar, Download Stats, bulk selection actions, and a **live console** streaming job output over Server-Sent Events.
+
+**Server Arguments & Environment Variables:**
+- **`--host <IP>`**
+  The interface to bind the server to. Default is `0.0.0.0` (accessible from any device on your local network). Use `127.0.0.1` to restrict access strictly to the local machine.
+  *Usage:* `python manager_server.py --host 127.0.0.1`
+- **`--port <PORT>`**
+  The port to run the web server on. Default is `5300`.
+  *Usage:* `python manager_server.py --port 8080`
+- **`--max-jobs <INT>`**
+  The maximum number of background downloader processes allowed to run simultaneously in the queue. Default is `1` (prevents bandwidth congestion).
+  *Usage:* `python manager_server.py --max-jobs 2`
+- **`MIRURO_UI_TOKEN` (Environment Variable)**
+  Since the server binds to the local network (`0.0.0.0`) by default, anyone on your network can access it. Set this variable to secure the UI behind a token. You will then access it via `http://<server-ip>:5300/?token=secret`.
+  *Usage:* `MIRURO_UI_TOKEN=secret python manager_server.py`
 
 ## 🛠 Advanced Features
 
