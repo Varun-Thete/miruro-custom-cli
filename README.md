@@ -223,14 +223,6 @@ python manager_server.py
 
 ---
 
-## 🛠️ Advanced Features
-
-### Smart stream resolution filtering
-
-Providers sometimes obscure video resolutions, labeling 720p streams the same as 1080p in their JSON endpoints. The CLI parses `.m3u8` master playlists, evaluates the real heights, and defaults to `0` (Unknown) for streams lacking metadata, so you never accidentally downgrade quality while racing servers.
-
----
-
 ## 🤝 Contributing
 
 Contributions, issues, and feature requests are welcome! Feel free to open an issue or submit a pull request.
