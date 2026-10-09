@@ -1778,7 +1778,7 @@ def main():
             
     elif manual_id:
         target_eps = parse_episodes_arg(args.episodes)
-        process_series(manual_id, target_eps, args.provider, args.category, args.quality, upgrade_dubs=args.upgrade_dubs, subtitles_only=args.subtitles_only, miruro_uuid=m_uuid)
+        process_series(manual_id, target_eps, args.provider, args.category, args.quality, force=args.force, upgrade_dubs=args.upgrade_dubs, subtitles_only=args.subtitles_only, miruro_uuid=m_uuid)
     else:
         parser.print_help()
 
