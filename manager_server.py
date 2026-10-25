@@ -564,7 +564,7 @@ def bulk(body: BulkBody):
 # Routes: global operations, failures, stats
 # ---------------------------------------------------------------------------
 @app.post("/api/auto")
-def run_auto(dry_run: bool = False, upgrade_dubs: bool = False):
+def run_auto(dry_run: bool = False, upgrade_dubs: bool = True):
     args = ["--auto"]
     if dry_run:
         args.append("--dry-run")
