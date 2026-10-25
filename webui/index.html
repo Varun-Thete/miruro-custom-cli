@@ -692,7 +692,7 @@ $('#sq').addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeou
 
 /* ---------- header buttons / filters ---------- */
 const runJob = (path, msg) => guard(async () => { const j = await post(path); toast(msg); selectJob(j.id); openConsole(true); });
-$('#btnAuto').onclick = runJob('/auto', 'Auto-scan queued');
+$('#btnAuto').onclick = runJob('/auto?upgrade_dubs=true', 'Auto-scan queued');
 $('#btnDry').onclick = runJob('/auto?dry_run=true', 'Dry run queued');
 $('#btnRetry').onclick = runJob('/retry-failed', 'Retrying failed downloads');
 ['q', 'sort', 'statusFilter'].forEach(id => $('#' + id).addEventListener('input', render));
