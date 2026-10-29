@@ -45,19 +45,41 @@ Automatic tracking · Cloudflare bypass · multi-provider HLS racing · local li
 
 ### Setup
 
+#### Windows
+
+A virtual environment is **optional** on Windows — a global install works fine if this is your only Python project.
+
+```bat
+:: 1. Clone the repository
+git clone https://github.com/Varun-Thete/miruro-custom-cli.git
+cd miruro-custom-cli
+
+:: 2. Install dependencies globally
+pip install -r requirements.txt
+```
+
+> [!TIP]
+> If you want isolation, run `python -m venv .venv` then `.venv\Scripts\activate` before the pip install.
+
+#### Linux / Ubuntu
+
+A virtual environment is **strongly recommended** on Linux — a bare `pip install` will fail with an *"externally managed environment"* error on most distros.
+
 ```bash
 # 1. Clone the repository
 git clone https://github.com/Varun-Thete/miruro-custom-cli.git
 cd miruro-custom-cli
 
 # 2. Create and activate a virtual environment
-python -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate
 
 # 3. Install dependencies
 pip install -r requirements.txt
 ```
 
+> [!TIP]
+> Add `source /path/to/.venv/bin/activate` at the top of your `run.sh` so the venv activates automatically every time you launch the script.
 ---
 
 ## ⚡ Quick Start
