@@ -1,7 +1,24 @@
-httpx>=0.25.0
-yt-dlp>=2023.10.13
-uvicorn>=0.23.2
-fastapi>=0.103.1
-curl_cffi>=0.16.1
-python-dotenv>=1.0.0
-pycryptodome>=3.19.0
+# Title: requirements.txt
+# Creator: Vernox
+# Description: All third-party dependencies for Miruro CLI and Web Manager.
+
+# -- Core HTTP / Cloudflare bypass --
+curl_cffi>=0.16.1           # Impersonation HTTP client; used for all Miruro API calls
+httpx>=0.25.0               # Async HTTP; used for AniList GraphQL queries
+requests>=2.31.0            # Fallback HTTP client used in downloader.py
+
+# -- Cloudflare solvers --
+DrissionPage>=4.0.0         # Primary autonomous Cloudflare solver (Chromium-based)
+undetected-chromedriver>=3.5.0  # Fallback Cloudflare solver
+
+# -- Web Manager (manager_server.py) --
+fastapi>=0.103.1            # REST API framework
+uvicorn>=0.23.2             # ASGI server for FastAPI
+pydantic>=2.0.0             # Data validation; BaseModel used in manager_server.py
+
+# -- HLS / Stream decryption --
+pycryptodome>=3.19.0        # AES-128 decryption for encrypted HLS streams
+
+# -- Utilities --
+PyYAML>=6.0                 # YAML config file support (config.py)
+tqdm>=4.65.0                # Download progress bar (hls_downloader.py)
