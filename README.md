@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎬 Miruro Custom CLI
+# 🎬 Miruro Custom CLI (v1.3.8)
 
 ### An autonomous anime downloader for Miruro and its providers
 
@@ -8,6 +8,7 @@ Automatic tracking · Cloudflare bypass · multi-provider HLS racing · local li
 
 <br>
 
+![Version](https://img.shields.io/badge/Version-v1.3.8-6366F1?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![FFmpeg](https://img.shields.io/badge/FFmpeg-required-007808?style=for-the-badge&logo=ffmpeg&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-local%20DB-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
@@ -15,7 +16,7 @@ Automatic tracking · Cloudflare bypass · multi-provider HLS racing · local li
 
 <br>
 
-[Features](#-features) · [Installation](#-installation) · [Quick Start](#-quick-start) · [CLI Reference](#-cli-reference) · [Web Manager](#-web-manager) · [Advanced](#-advanced-features)
+[Features](#-features) · [Installation](#-installation) · [Quick Start](#-quick-start) · [CLI Reference](#-cli-reference) · [Web Manager](#-web-manager)
 
 </div>
 
