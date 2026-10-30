@@ -88,6 +88,27 @@ def set_debug(enabled: bool = True):
 def is_debug() -> bool:
     return VERBOSE or getattr(cfg, "debug", False)
 
+def strip_fake_header(data: bytes) -> bytes:
+    """
+    Finds genuine MPEG-TS sync byte (0x47) by verifying 188-byte packet cadence,
+    stripping any fake image/script headers preceding the stream.
+    """
+    if not data:
+        return data
+    sync = data.find(b"\x47")
+    while sync != -1:
+        valid = True
+        for mult in (188, 376, 564):
+            check_pos = sync + mult
+            if check_pos < len(data) and data[check_pos] != 0x47:
+                valid = False
+                break
+        if valid:
+            return data[sync:]
+        sync = data.find(b"\x47", sync + 1)
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Network Connectivity Watchdog & Auto-Pause
 # ---------------------------------------------------------------------------
@@ -334,14 +355,22 @@ def fetch_playlist_segments(
                 line = urllib.parse.urljoin(playlist_url, line)
             segments.append(line)
 
-    file_logger.log_playlist(
-        playlist_url=playlist_url,
-        headers=dict(session.headers) if hasattr(session, "headers") else None,
-        is_master=False,
-        resolution=target_res,
-        segment_urls=segments,
-        key_info=key_info,
-    )
+    file_logger.log_playlist(
+
+        playlist_url=playlist_url,
+
+        headers=dict(session.headers) if hasattr(session, "headers") else None,
+
+        is_master=False,
+
+        resolution=target_res,
+
+        segment_urls=segments,
+
+        key_info=key_info,
+
+    )
+
     return segments, key_info
 
 
@@ -400,9 +429,7 @@ def probe_server(
                 pass  # Will be caught during full download
 
         # Strip fake image header before MPEG-TS sync byte
-        sync = probe_data.find(b"\x47")
-        if sync != -1:
-            probe_data = probe_data[sync:]
+        probe_data = strip_fake_header(probe_data)
 
         mark_server(m3u8_url, True)
         return {
@@ -444,7 +471,6 @@ def race_servers(
         candidates = stream_list
 
     log_msg(f"    {C.BLUE}◆{C.RESET} Racing {len(candidates)} server(s)...", debug=True)
-    file_logger.log_server_race(candidates, target_res=target_res)
     file_logger.log_server_race(candidates, target_res=target_res)
 
     winner = None
@@ -585,9 +611,7 @@ def download_segment_with_retry(
                 data = AES.new(key_info["key"], AES.MODE_CBC, iv=iv).decrypt(data)
 
             # Strip fake image header before MPEG-TS sync byte
-            sync = data.find(b"\x47")
-            if sync != -1:
-                data = data[sync:]
+            data = strip_fake_header(data)
 
             if attempt > 1:
                 log_msg(f"    {C.GREEN}✔{C.RESET} chunk {index:04d} recovered on attempt {attempt}", debug=True)
@@ -806,10 +830,25 @@ def download_hls(
     except OSError:
         pass
 
+    # Validate that all chunks completed download without gaps
+    if len(downloaded) != total:
+        missing_count = total - len(downloaded)
+        log_msg(f"    {C.RED}✘{C.RESET} Incomplete download: {missing_count} chunk(s) missing out of {total}. Aborting remux.")
+        mark_server(playlist_url, False)
+        if chunks_dir.exists():
+            import shutil
+            shutil.rmtree(chunks_dir, ignore_errors=True)
+        return False
+
     # ---- Remux to MP4 ------------------------------------------------------
     log_msg(f"    {C.BLUE}◆{C.RESET} Remuxing to MP4...", debug=True)
     ffmpeg_cmd = [
-        "ffmpeg", "-y", "-i", temp_ts, "-c", "copy", "-loglevel", "error",
+        "ffmpeg", "-y",
+        "-fflags", "+genpts",
+        "-i", temp_ts,
+        "-c", "copy",
+        "-movflags", "+faststart",
+        "-loglevel", "error",
         str(output_path)
     ]
     t_ff0 = time.monotonic()
@@ -821,12 +860,22 @@ def download_hls(
             text=True,
         )
         t_ff_dur = time.monotonic() - t_ff0
+        if not os.path.exists(output_path) or os.path.getsize(output_path) < 1024:
+            log_msg(f"    {C.YELLOW}⚠{C.RESET} FFmpeg produced an empty or missing output file.")
+            file_logger.log_ffmpeg(ffmpeg_cmd, returncode=1, duration_sec=t_ff_dur, output_path=str(output_path), error_output="Output file empty or missing after remux")
+            return False
+
         file_logger.log_ffmpeg(ffmpeg_cmd, returncode=0, duration_sec=t_ff_dur, output_path=str(output_path))
         mark_server(playlist_url, True)
         return True
+    except FileNotFoundError:
+        t_ff_dur = time.monotonic() - t_ff0
+        log_msg(f"    {C.RED}✘{C.RESET} FFmpeg is not installed or not in system PATH.")
+        file_logger.log_ffmpeg(ffmpeg_cmd, returncode=127, duration_sec=t_ff_dur, output_path=str(output_path), error_output="FFmpeg binary not found on system PATH")
+        return False
     except subprocess.CalledProcessError as e:
         t_ff_dur = time.monotonic() - t_ff0
-        log_msg(f"    {C.YELLOW}⚠{C.RESET} FFmpeg remux failed.")
+        log_msg(f"    {C.YELLOW}⚠{C.RESET} FFmpeg remux failed: {e.stderr.strip() if e.stderr else e}")
         file_logger.log_ffmpeg(ffmpeg_cmd, returncode=e.returncode, duration_sec=t_ff_dur, output_path=str(output_path), error_output=e.stderr or str(e))
         return False
     finally:

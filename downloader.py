@@ -1,14 +1,54 @@
 import subprocess
+from pathlib import Path
 
-def has_audio_track(filepath):
+def validate_media_file(filepath: str | Path) -> tuple[bool, bool, str]:
+    """
+    Validates that a video file is playable, structurally sound, and contains audio.
+    Returns:
+        (is_valid: bool, has_audio: bool, error_message: str)
+    """
+    p = Path(filepath)
+    if not p.exists() or p.stat().st_size < 1024:
+        return False, False, "File is missing or empty (< 1KB)"
+
     try:
-        out = subprocess.check_output(
-            ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "default=noprint_wrappers=1:nokey=1", filepath],
-            stderr=subprocess.STDOUT
-        ).decode()
-        return "audio" in out.lower()
-    except Exception:
-        return True
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "stream=codec_type",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(p)
+        ]
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=15.0
+        )
+        if result.returncode != 0:
+            err_msg = result.stderr.strip() or f"ffprobe exit code {result.returncode}"
+            return False, False, f"ffprobe error: {err_msg}"
+
+        output = result.stdout.lower()
+        has_video = "video" in output
+        has_audio = "audio" in output
+
+        if not has_video:
+            return False, has_audio, "No video stream detected"
+
+        return True, has_audio, "OK"
+    except subprocess.TimeoutExpired:
+        return False, False, "ffprobe validation timed out (corrupted stream header)"
+    except FileNotFoundError:
+        return True, True, "ffprobe not found on PATH; deep validation skipped"
+    except Exception as e:
+        return False, False, f"Unexpected validation error: {e}"
+
+def has_audio_track(filepath: str | Path) -> bool:
+    """Backwards-compatible helper returning True only if file is valid and contains audio."""
+    is_valid, has_audio, _ = validate_media_file(filepath)
+    return is_valid and has_audio
 
 # ==============================================================================
 # Title: Miruro Smart Auto-Downloader with Parallel Server Racing
@@ -706,7 +746,10 @@ def _download_subtitle(subs: list, dest_path: "Path") -> bool:
     from curl_cffi import requests as _cfr
     from urllib.parse import urlparse
 
-    import requests as _req
+    try:
+        import requests as _req
+    except ImportError:
+        _req = None
 
     for sub in subs:
         sub_url = sub.get("file", "")
@@ -746,7 +789,10 @@ def _download_subtitle(subs: list, dest_path: "Path") -> bool:
 
         try:
             t_sub0 = time.monotonic()
-            resp = _req.get(sub_url, headers=hdrs, timeout=20, allow_redirects=True)
+            if _req is not None:
+                resp = _req.get(sub_url, headers=hdrs, timeout=20, allow_redirects=True)
+            else:
+                resp = httpx.get(sub_url, headers=hdrs, timeout=20.0, follow_redirects=True)
             t_sub_dur = (time.monotonic() - t_sub0) * 1000
             file_logger.log_request(
                 url=sub_url,
@@ -1004,18 +1050,26 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
     t1 = time.monotonic()
 
     if success:
-        audio_ok = has_audio_track(str(save_path))
+        is_valid, audio_ok, val_msg = validate_media_file(save_path)
         elapsed = t1 - t0
         time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
-        file_logger.log("VALIDATION", f"Download validation for {save_path.name}: audio_track={'OK' if audio_ok else 'MISSING'}", details={
+        file_logger.log("VALIDATION", f"Download validation for {save_path.name}: valid={is_valid}, audio={'OK' if audio_ok else 'MISSING'}", details={
             "destination": str(save_path),
             "file_size": save_path.stat().st_size if save_path.exists() else 0,
+            "is_valid": is_valid,
             "has_audio_track": audio_ok,
+            "validation_msg": val_msg,
             "download_duration": time_str,
             "server": winner.get("server_name"),
         })
 
-        if not audio_ok:
+        if not is_valid:
+            print(f"    {C.RED}✘{C.RESET} Output file corrupted ({val_msg}). Deleting and trying another server...")
+            try:
+                save_path.unlink(missing_ok=True)
+            except Exception: pass
+            success = False
+        elif not audio_ok:
             print(f"    {C.RED}✘{C.RESET} File has NO AUDIO TRACK. Deleting and trying another server...")
             try:
                 save_path.unlink(missing_ok=True)
@@ -1030,7 +1084,8 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
                 _download_subtitle(subs, save_path)
             return True
 
-    print(f"    {C.RED}✘{C.RESET} Winner failed (no audio). Trying remaining servers...")
+    fail_reason = val_msg if 'val_msg' in locals() and not is_valid else "no audio or failed remux"
+    print(f"    {C.RED}✘{C.RESET} Winner failed ({fail_reason}). Trying remaining servers...")
     remaining = [(u, h, s, subs) for u, h, s, subs in all_streams if u != winner["m3u8_url"]]
 
     for m3u8_url, req_headers, server_name, subs in remaining:
@@ -1046,19 +1101,35 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
         )
         t1_fb = time.monotonic()
         if success:
-            if not has_audio_track(str(save_path)):
+            is_valid, audio_ok, val_msg = validate_media_file(save_path)
+            elapsed = t1_fb - t0_fb
+            time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
+            file_logger.log("VALIDATION", f"Fallback validation for {save_path.name}: valid={is_valid}, audio={'OK' if audio_ok else 'MISSING'}", details={
+                "destination": str(save_path),
+                "file_size": save_path.stat().st_size if save_path.exists() else 0,
+                "is_valid": is_valid,
+                "has_audio_track": audio_ok,
+                "validation_msg": val_msg,
+                "download_duration": time_str,
+                "server": server_name,
+            })
+
+            if not is_valid:
+                print(f"    {C.RED}✘{C.RESET} Fallback file corrupted ({val_msg}). Deleting and trying next...")
+                try:
+                    save_path.unlink(missing_ok=True)
+                except Exception: pass
+                success = False
+            elif not audio_ok:
                 print(f"    {C.RED}✘{C.RESET} File has NO AUDIO TRACK. Deleting and trying next...")
                 try:
                     save_path.unlink(missing_ok=True)
                 except Exception: pass
                 success = False
             else:
-                elapsed = t1_fb - t0_fb
-                time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
                 print(f"    {C.GREEN}✔{C.RESET} Downloaded EP {ep_num} successfully in {time_str}.")
                 _log_download(anilist_id, title, ep_num, target_cat, server_name, save_path, elapsed)
 
-                # Use global_subs (same across all streams) for subtitle download
                 global_subs = winner.get("subtitles") or subs
                 if global_subs:
                     _download_subtitle(global_subs, save_path)
