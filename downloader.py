@@ -1428,7 +1428,7 @@ def main():
     parser.add_argument("--priority", type=int, default=None, help="Set priority for the tracked series (higher number = downloaded first during --auto)")
     args = parser.parse_args()
 
-    VERSION = "1.3.8"
+    VERSION = "1.3.9"
     print(f"{C.BLUE}◆{C.RESET} {C.BOLD}Miruro CLI{C.RESET} {C.GRAY}v{VERSION}{C.RESET}")
 
     if args.log:
