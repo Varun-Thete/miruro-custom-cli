@@ -148,6 +148,9 @@ python downloader.py -l 163142 --subtitles-only
 
 # Preview what would be downloaded without writing files
 python downloader.py -l 163142 --dry-run
+
+# Deep diagnostic logging (Referers, playlists, and every segment URL logged to /logs)
+python downloader.py -l 163142 -e 1 --log
 ```
 
 ### 4️⃣ Target a specific quality
@@ -212,6 +215,7 @@ Every argument available in `downloader.py`.
 | `--force-images` | Combine with rehash flags to overwrite existing images instead of only grabbing missing ones. | `--rehash-all --force-images` |
 | `--dry-run` | Show what *would* be downloaded without writing any files. | `--auto --dry-run` |
 | `--debug` | Verbose output of HTTP requests and raw API responses. | `--debug` |
+| `--log [FILENAME]` | Deep diagnostic logging to `/logs/` (logs Referers, headers, master/media playlists, and every individual segment URL). | `-l 163142 -e 1 --log` |
 | `--test-subs <UUID> <EP_NUM>` | Developer flag: probe and fetch subtitle tracks for one episode without touching the video. | `--test-subs <UUID> 1` |
 
 ---

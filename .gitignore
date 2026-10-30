@@ -24,3 +24,7 @@ Thumbs.db
 
 # Downloads folder
 Downloads/
+
+# Diagnostic session logs
+logs/
+*.log

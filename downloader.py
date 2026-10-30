@@ -49,6 +49,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import db
 import hls_downloader
+import file_logger
 db.init_db()
 
 from config import cfg
@@ -416,18 +417,25 @@ def _get_cf_cookie() -> dict | None:
         if _GLOBAL_CF_COOKIE is not None:
             return _GLOBAL_CF_COOKIE if _GLOBAL_CF_COOKIE else None
 
+        file_logger.log("CF_SOLVER", f"Launching stealth browser to solve Cloudflare for {_MIRURO_DOMAIN}...")
         print(f"  {C.BLUE}◆{C.RESET} Launching stealth browser to solve Cloudflare...")
         out = _solve_cf_in_subprocess()
         if out:
             try:
                 data = _json.loads(out)
                 print(f"  {C.GREEN}✔{C.RESET} Cloudflare solved autonomously!")
+                file_logger.log("CF_SOLVER", "Cloudflare solved autonomously", details={
+                    "cookie": data.get("cookie"),
+                    "headers": data.get("headers"),
+                })
                 _GLOBAL_CF_COOKIE = data
                 return data
-            except Exception:
+            except Exception as e:
+                file_logger.log("CF_SOLVER", f"Failed to parse Cloudflare solver output: {e}")
                 pass
 
         print(f"  {C.YELLOW}⚠{C.RESET} Could not obtain CF clearance — proceeding without cookie.")
+        file_logger.log("CF_SOLVER", "Could not obtain CF clearance — proceeding without cookie.")
             
         _GLOBAL_CF_COOKIE = {}
         return None
@@ -472,7 +480,18 @@ def api_v1_request(path: str, query: dict = None, impersonate: str = "chrome124"
     with _PIPE_SEMAPHORE:
         for attempt in range(6):
             try:
+                t_api0 = time.monotonic()
                 r = sess.get(url, headers=hdrs, timeout=15)
+                t_api_dur = (time.monotonic() - t_api0) * 1000
+                file_logger.log_request(
+                    url=url,
+                    method="GET",
+                    headers=hdrs,
+                    status_code=r.status_code,
+                    duration_ms=t_api_dur,
+                    byte_size=len(r.content),
+                    category="MIRURO_API",
+                )
                 
                 if r.status_code in (429, 502, 503):
                     wait = 2 ** attempt
@@ -726,9 +745,25 @@ def _download_subtitle(subs: list, dest_path: "Path") -> bool:
         }
 
         try:
+            t_sub0 = time.monotonic()
             resp = _req.get(sub_url, headers=hdrs, timeout=20, allow_redirects=True)
+            t_sub_dur = (time.monotonic() - t_sub0) * 1000
+            file_logger.log_request(
+                url=sub_url,
+                method="GET",
+                headers=hdrs,
+                status_code=resp.status_code,
+                duration_ms=t_sub_dur,
+                byte_size=len(resp.content) if resp.content else 0,
+                category="SUBTITLE_REQ",
+            )
             if resp.status_code == 200 and resp.content:
                 out_path.write_bytes(resp.content)
+                file_logger.log("SUBTITLE", f"Downloaded subtitle -> {out_path.name}", details={
+                    "target_path": str(out_path),
+                    "file_size": len(resp.content),
+                    "referer": referer,
+                })
                 print(f"    {C.GREEN}✔{C.RESET} Downloaded subtitle → {out_path.name}")
                 return True
             if resp.status_code == 403:
@@ -848,6 +883,15 @@ def discover_all_streams(miruro_id, ep_num, target_cat, target_providers=None, t
                     best_streams_by_server[srv_name] = (best_url, headers, srv_name, subs)
                     print(f"    {C.BLUE}◆{C.RESET} Selected {best_h}p stream for {srv_name}")
 
+    file_logger.log("STREAM_DISC", f"Discovered {len(best_streams_by_server)} candidate stream server(s) for EP {ep_num} ({target_cat}):", details={
+        srv: {
+            "m3u8_url": info[0],
+            "referer": info[1].get("Referer"),
+            "headers": info[1],
+            "subtitles_count": len(info[3]),
+        }
+        for srv, info in best_streams_by_server.items()
+    })
     return list(best_streams_by_server.values())
 
 
@@ -960,15 +1004,24 @@ def download_episode(anilist_id, title, ep_data, provider, category, target_res,
     t1 = time.monotonic()
 
     if success:
-        if not has_audio_track(str(save_path)):
+        audio_ok = has_audio_track(str(save_path))
+        elapsed = t1 - t0
+        time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
+        file_logger.log("VALIDATION", f"Download validation for {save_path.name}: audio_track={'OK' if audio_ok else 'MISSING'}", details={
+            "destination": str(save_path),
+            "file_size": save_path.stat().st_size if save_path.exists() else 0,
+            "has_audio_track": audio_ok,
+            "download_duration": time_str,
+            "server": winner.get("server_name"),
+        })
+
+        if not audio_ok:
             print(f"    {C.RED}✘{C.RESET} File has NO AUDIO TRACK. Deleting and trying another server...")
             try:
                 save_path.unlink(missing_ok=True)
             except Exception: pass
             success = False
         else:
-            elapsed = t1 - t0
-            time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
             print(f"    {C.GREEN}✔{C.RESET} Downloaded EP {ep_num} successfully in {time_str}.")
             _log_download(anilist_id, title, ep_num, target_cat, winner.get("server_name"), save_path, elapsed)
 
@@ -1300,11 +1353,21 @@ def main():
     parser.add_argument("--refresh-airing", action="store_true", help="Refresh next-airing info for all tracked series (feeds the web calendar)")
     parser.add_argument("--dry-run", action="store_true", help="Probe and show what would be downloaded without actually downloading")
     parser.add_argument("--debug", action="store_true", help="Enable verbose tracing for HTTP requests")
+    parser.add_argument("--log", nargs="?", const=True, default=False, help="Enable detailed diagnostic file logging to /logs (Referer, playlists, segment URLs, etc.)")
     parser.add_argument("--priority", type=int, default=None, help="Set priority for the tracked series (higher number = downloaded first during --auto)")
     args = parser.parse_args()
 
     VERSION = "1.3.7"
     print(f"{C.BLUE}◆{C.RESET} {C.BOLD}Miruro CLI{C.RESET} {C.GRAY}v{VERSION}{C.RESET}")
+
+    if args.log:
+        log_file = file_logger.init_logger(args.log, CLI_DIR / "logs")
+        if log_file:
+            print(f"  {C.GREEN}✔{C.RESET} Diagnostic logging enabled -> {log_file}")
+            file_logger.log("SYSTEM", f"Miruro CLI v{VERSION} diagnostic logging active")
+            file_logger.log("SYSTEM", f"Command line: {' '.join(sys.argv)}")
+            file_logger.log("SYSTEM", f"Platform: {sys.platform} | Python: {sys.version.split()[0]}")
+            file_logger.log("SYSTEM", f"Save directory: {DL_DIR}")
 
     if args.debug:
         cfg.debug = True

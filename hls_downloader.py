@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import file_logger
 
 # Fix Windows console unicode issues
 if sys.stdout and hasattr(sys.stdout, 'reconfigure') and sys.stdout.encoding != 'utf-8':
@@ -246,7 +247,18 @@ def fetch_playlist_segments(
     target_res: int = 0,
 ) -> tuple[list[str], dict | None]:
     """Resolve master -> media playlist and return (segment_urls, key_info)."""
+    t_pl0 = time.monotonic()
     res = session.get(playlist_url, timeout=PROBE_TIMEOUT)
+    t_pl_dur = (time.monotonic() - t_pl0) * 1000
+    file_logger.log_request(
+        url=playlist_url,
+        method="GET",
+        headers=dict(session.headers) if hasattr(session, "headers") else None,
+        status_code=res.status_code,
+        duration_ms=t_pl_dur,
+        byte_size=len(res.content),
+        category="PLAYLIST_REQ",
+    )
     res.raise_for_status()
 
     lines = res.text.splitlines()
@@ -282,6 +294,11 @@ def fetch_playlist_segments(
                     best_url = f"{best_url}?{parsed_orig.query}"
                 best_url = urllib.parse.urljoin(playlist_url, best_url)
             log_msg(f"    {C.BLUE}◆{C.RESET} Master playlist detected. Selected resolution: {best_res}p", debug=True)
+            file_logger.log("MASTER_M3U8", f"Master playlist resolved: {playlist_url}", details={
+                "selected_variant_url": best_url,
+                "selected_resolution": f"{best_res}p",
+                "headers": dict(session.headers) if hasattr(session, "headers") else None,
+            })
             return fetch_playlist_segments(best_url, session, target_res)
 
     # ---- Media playlist ---------------------------------------------------
@@ -317,6 +334,14 @@ def fetch_playlist_segments(
                 line = urllib.parse.urljoin(playlist_url, line)
             segments.append(line)
 
+    file_logger.log_playlist(
+        playlist_url=playlist_url,
+        headers=dict(session.headers) if hasattr(session, "headers") else None,
+        is_master=False,
+        resolution=target_res,
+        segment_urls=segments,
+        key_info=key_info,
+    )
     return segments, key_info
 
 
@@ -341,9 +366,25 @@ def probe_server(
             return None
 
         # Download the very first chunk as a health check
+        t_pr0 = time.monotonic()
         with _global_sem:
             r = session.get(segments[0], timeout=PROBE_TIMEOUT)
+        t_pr_dur = (time.monotonic() - t_pr0) * 1000
+
+        file_logger.log_segment(
+            index=0,
+            url=segments[0],
+            attempt=1,
+            status_code=r.status_code,
+            size=len(r.content),
+            duration_ms=t_pr_dur,
+            referer=headers.get("Referer") if headers else None,
+            headers=headers,
+            decrypted=False,
+        )
+
         if r.status_code != 200:
+            file_logger.log("PROBE_SERVER", f"Probe chunk 0 failed for {server_name}: HTTP {r.status_code}")
             mark_server(m3u8_url, False)
             return None
 
@@ -403,6 +444,8 @@ def race_servers(
         candidates = stream_list
 
     log_msg(f"    {C.BLUE}◆{C.RESET} Racing {len(candidates)} server(s)...", debug=True)
+    file_logger.log_server_race(candidates, target_res=target_res)
+    file_logger.log_server_race(candidates, target_res=target_res)
 
     winner = None
     with ThreadPoolExecutor(max_workers=min(len(candidates), cfg.server_race_workers)) as pool:
@@ -416,6 +459,7 @@ def race_servers(
                 winner = result
                 log_msg(f"    {C.GREEN}✔{C.RESET} Server WON: {result['server_name']} "
                         f"(probe chunk: {result['probe_size']} bytes)", debug=True)
+                file_logger.log_server_race(candidates, winner=result, target_res=target_res)
                 # Don't wait for remaining probes — but don't blacklist them either
                 break
 
@@ -488,11 +532,24 @@ def download_segment_with_retry(
         if now < _rl_until:
             time.sleep(_rl_until - now)
 
+        t_seg0 = time.monotonic()
         try:
             with _global_sem:
                 r = session.get(url, timeout=CHUNK_TIMEOUT)
+            t_seg_dur = (time.monotonic() - t_seg0) * 1000
 
             if r.status_code == 429:
+                file_logger.log_segment(
+                    index=index,
+                    url=url,
+                    attempt=attempt,
+                    status_code=429,
+                    size=0,
+                    duration_ms=t_seg_dur,
+                    referer=headers.get("Referer") if headers else None,
+                    headers=headers,
+                    error=f"429 Rate Limit (global pause {wait:.1f}s)",
+                )
                 attempt_429 += 1
                 if attempt_429 > max_429_retries:
                     raise RuntimeError("Too many 429 Too Many Requests")
@@ -535,6 +592,17 @@ def download_segment_with_retry(
             if attempt > 1:
                 log_msg(f"    {C.GREEN}✔{C.RESET} chunk {index:04d} recovered on attempt {attempt}", debug=True)
 
+            file_logger.log_segment(
+                index=index,
+                url=url,
+                attempt=attempt,
+                status_code=r.status_code,
+                size=len(data),
+                duration_ms=t_seg_dur,
+                referer=headers.get("Referer") if headers else None,
+                headers=headers,
+                decrypted=bool(key_info and key_info.get("method") == "AES-128"),
+            )
             return index, data
 
         except Exception as e:
@@ -740,16 +808,26 @@ def download_hls(
 
     # ---- Remux to MP4 ------------------------------------------------------
     log_msg(f"    {C.BLUE}◆{C.RESET} Remuxing to MP4...", debug=True)
+    ffmpeg_cmd = [
+        "ffmpeg", "-y", "-i", temp_ts, "-c", "copy", "-loglevel", "error",
+        str(output_path)
+    ]
+    t_ff0 = time.monotonic()
     try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", temp_ts, "-c", "copy", "-loglevel", "error",
-             str(output_path)],
+        proc = subprocess.run(
+            ffmpeg_cmd,
             check=True,
+            capture_output=True,
+            text=True,
         )
+        t_ff_dur = time.monotonic() - t_ff0
+        file_logger.log_ffmpeg(ffmpeg_cmd, returncode=0, duration_sec=t_ff_dur, output_path=str(output_path))
         mark_server(playlist_url, True)
         return True
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
+        t_ff_dur = time.monotonic() - t_ff0
         log_msg(f"    {C.YELLOW}⚠{C.RESET} FFmpeg remux failed.")
+        file_logger.log_ffmpeg(ffmpeg_cmd, returncode=e.returncode, duration_sec=t_ff_dur, output_path=str(output_path), error_output=e.stderr or str(e))
         return False
     finally:
         if os.path.exists(temp_ts):
