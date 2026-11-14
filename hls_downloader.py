@@ -262,12 +262,152 @@ def get_session(headers: dict | None = None, pool_size: int = 8) -> requests.Ses
 # ---------------------------------------------------------------------------
 # Playlist parsing
 # ---------------------------------------------------------------------------
+
+def _resolve_url(raw: str, base_url: str, orig_query: str) -> str:
+    """Resolve a relative or absolute segment/playlist URL."""
+    if not raw.startswith("http"):
+        pb = urllib.parse.urlparse(raw)
+        if not pb.query and orig_query:
+            raw = f"{raw}?{orig_query}"
+        raw = urllib.parse.urljoin(base_url + "/", raw)
+    return raw
+
+
+def _parse_audio_renditions(lines: list[str], base_url: str, orig_query: str) -> dict[str, str]:
+    """
+    Parse all EXT-X-MEDIA TYPE=AUDIO entries from a master playlist.
+    Returns a dict of {language_code_lower: resolved_playlist_url}.
+    e.g. {"ja": "https://...", "en": "https://...", "fr": "https://..."}
+    """
+    audio_map: dict[str, str] = {}
+    for line in lines:
+        if not (line.startswith("#EXT-X-MEDIA") and "TYPE=AUDIO" in line):
+            continue
+        uri_m = re.search(r'URI="([^"]+)"', line)
+        lang_m = re.search(r'LANGUAGE="([^"]+)"', line)
+        if not uri_m:
+            continue  # inline audio (muxed inside video variant) — no separate URI
+        lang = lang_m.group(1).lower() if lang_m else "und"
+        # Normalise language subtags: "ja" stays "ja", "jpn" -> keep as-is
+        audio_map[lang] = _resolve_url(uri_m.group(1), base_url, orig_query)
+    return audio_map
+
+
+def _pick_audio_lang(audio_map: dict[str, str], preferred: str) -> tuple[str, str] | tuple[None, None]:
+    """
+    Pick the best available audio language from audio_map.
+    Priority order:
+      1. preferred  (e.g. "en" / "english")
+      2. any "en*" prefix (en-US, eng, english)
+      3. any "ja*" / "jpn" / "japanese"  (sub fallback)
+      4. first entry in map
+    Returns (lang_key, playlist_url) or (None, None) if map is empty.
+    """
+    if not audio_map:
+        return None, None
+
+    pref_norm = preferred.lower()
+
+    # Exact match first
+    if pref_norm in audio_map:
+        return pref_norm, audio_map[pref_norm]
+
+    # Prefix / substring match for preferred
+    for k, v in audio_map.items():
+        if k.startswith(pref_norm) or pref_norm in k:
+            return k, v
+
+    # English variants (en, en-us, eng, english)
+    for k, v in audio_map.items():
+        if k.startswith("en"):
+            return k, v
+
+    # Japanese variants as last resort
+    for k, v in audio_map.items():
+        if k.startswith("ja") or k.startswith("jp") or "japanese" in k:
+            return k, v
+
+    # Absolute fallback: first entry
+    k = next(iter(audio_map))
+    return k, audio_map[k]
+
+
+def fetch_audio_segments(
+    audio_playlist_url: str,
+    session: requests.Session,
+) -> tuple[list[str], dict | None]:
+    """
+    Fetch an audio-only child playlist and return (segment_urls, key_info).
+    Reuses the same parsing logic as the video media playlist path.
+    """
+    t0 = time.monotonic()
+    res = session.get(audio_playlist_url, timeout=PROBE_TIMEOUT)
+    dur = (time.monotonic() - t0) * 1000
+    file_logger.log_request(
+        url=audio_playlist_url,
+        method="GET",
+        headers=dict(session.headers) if hasattr(session, "headers") else None,
+        status_code=res.status_code,
+        duration_ms=dur,
+        byte_size=len(res.content),
+        category="AUDIO_PLAYLIST",
+    )
+    res.raise_for_status()
+
+    lines = res.text.splitlines()
+    parsed_orig = urllib.parse.urlparse(audio_playlist_url)
+    orig_query = parsed_orig.query
+
+    segments: list[str] = []
+    key_info: dict | None = None
+
+    for line in lines:
+        line = line.strip()
+        if line.startswith("#EXT-X-KEY"):
+            mm = re.search(r"METHOD=([^,\s]+)", line)
+            um = re.search(r'URI="([^"]+)"', line)
+            im = re.search(r"IV=([^,\s]+)", line)
+            if mm and um:
+                ku = um.group(1)
+                if not ku.startswith("http"):
+                    ku = urllib.parse.urljoin(audio_playlist_url, ku)
+                kr = session.get(ku, timeout=PROBE_TIMEOUT)
+                kr.raise_for_status()
+                iv = None
+                if im:
+                    iv_s = im.group(1)
+                    if iv_s.lower().startswith("0x"):
+                        iv = bytes.fromhex(iv_s[2:])
+                key_info = {"method": mm.group(1), "key": kr.content, "iv": iv}
+        elif line and not line.startswith("#"):
+            pl = urllib.parse.urlparse(line)
+            if not pl.query and orig_query:
+                line = f"{line}?{orig_query}"
+            if not line.startswith("http"):
+                line = urllib.parse.urljoin(audio_playlist_url, line)
+            segments.append(line)
+
+    return segments, key_info
+
+
 def fetch_playlist_segments(
     playlist_url: str,
     session: requests.Session,
     target_res: int = 0,
-) -> tuple[list[str], dict | None]:
-    """Resolve master -> media playlist and return (segment_urls, key_info)."""
+    _audio_lang: str = "en",
+) -> tuple[list[str], dict | None, dict[str, str] | None, str | None]:
+    """
+    Resolve master -> media playlist and return:
+        (segment_urls, key_info, audio_map, selected_audio_playlist_url)
+
+    audio_map  : dict of {lang: url} parsed from EXT-X-MEDIA TYPE=AUDIO,
+                 or None if the stream has no demuxed audio tracks.
+    selected_audio_playlist_url : the URL for the caller's preferred language
+                 audio playlist, or None when audio is muxed / unavailable.
+
+    Backwards-compatible: callers that only unpack 2 values still work because
+    the extra values are simply unused.
+    """
     t_pl0 = time.monotonic()
     res = session.get(playlist_url, timeout=PROBE_TIMEOUT)
     t_pl_dur = (time.monotonic() - t_pl0) * 1000
@@ -314,13 +454,35 @@ def fetch_playlist_segments(
                 if not pb.query and parsed_orig.query:
                     best_url = f"{best_url}?{parsed_orig.query}"
                 best_url = urllib.parse.urljoin(playlist_url, best_url)
+
+            # ---- Parse demuxed audio renditions from master ----------------
+            audio_map = _parse_audio_renditions(lines, base_url, parsed_orig.query)
+            picked_lang, picked_audio_url = _pick_audio_lang(audio_map, _audio_lang)
+            if audio_map:
+                lang_list = ", ".join(audio_map.keys())
+                log_msg(
+                    f"    {C.BLUE}◆{C.RESET} Demuxed audio tracks detected: [{lang_list}]  "
+                    f"→ selected: '{picked_lang}'",
+                    debug=True,
+                )
+                file_logger.log("AUDIO_RENDITIONS", f"Master has {len(audio_map)} audio track(s)", details={
+                    "available": lang_list,
+                    "preferred": _audio_lang,
+                    "selected": picked_lang,
+                    "selected_url": picked_audio_url,
+                })
+            else:
+                picked_audio_url = None
+
             log_msg(f"    {C.BLUE}◆{C.RESET} Master playlist detected. Selected resolution: {best_res}p", debug=True)
             file_logger.log("MASTER_M3U8", f"Master playlist resolved: {playlist_url}", details={
                 "selected_variant_url": best_url,
                 "selected_resolution": f"{best_res}p",
                 "headers": dict(session.headers) if hasattr(session, "headers") else None,
             })
-            return fetch_playlist_segments(best_url, session, target_res)
+            # Recurse into the video variant (which is a media playlist, not a master)
+            segs, ki, _, _ = fetch_playlist_segments(best_url, session, target_res, _audio_lang)
+            return segs, ki, audio_map or None, picked_audio_url
 
     # ---- Media playlist ---------------------------------------------------
     segments: list[str] = []
@@ -356,22 +518,16 @@ def fetch_playlist_segments(
             segments.append(line)
 
     file_logger.log_playlist(
-
         playlist_url=playlist_url,
-
         headers=dict(session.headers) if hasattr(session, "headers") else None,
-
         is_master=False,
-
         resolution=target_res,
-
         segment_urls=segments,
-
         key_info=key_info,
-
     )
 
-    return segments, key_info
+    # Media playlists have no audio map of their own
+    return segments, key_info, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +545,9 @@ def probe_server(
         return None
     try:
         session = get_session(headers)
-        segments, key_info = fetch_playlist_segments(m3u8_url, session, target_res)
+        segments, key_info, audio_map, audio_playlist_url = fetch_playlist_segments(
+            m3u8_url, session, target_res
+        )
         if not segments:
             mark_server(m3u8_url, False)
             return None
@@ -442,6 +600,9 @@ def probe_server(
             "probe_chunk": (0, probe_data),   # already decrypted + stripped
             "probe_size": len(r.content),
             "subtitles": subtitles,
+            # Demuxed audio support (None for older muxed streams)
+            "audio_map": audio_map,
+            "audio_playlist_url": audio_playlist_url,
         }
     except Exception as e:
         log_msg(f"    {C.GRAY}[DEBUG] Probe failed for {server_name}: {e}{C.RESET}", debug=True)
@@ -660,6 +821,101 @@ def download_segment_with_retry(
 
 
 # ---------------------------------------------------------------------------
+# Audio segment downloader (demuxed HLS support)
+# ---------------------------------------------------------------------------
+def _download_audio_track(
+    audio_playlist_url: str,
+    headers: dict | None,
+    output_ts_path: str,
+    workers: int,
+) -> bool:
+    """
+    Download all segments from an audio-only HLS playlist and assemble them
+    into a single TS file at output_ts_path.
+
+    Returns True on success, False if the playlist is unreachable or empty.
+    This is intentionally fire-and-forget on failure so the caller can still
+    produce a silent video rather than crashing entirely.
+    """
+    try:
+        session = get_session(headers)
+        audio_segs, audio_key = fetch_audio_segments(audio_playlist_url, session)
+        if not audio_segs:
+            log_msg(f"    {C.YELLOW}⚠{C.RESET} Audio playlist is empty: {audio_playlist_url}")
+            return False
+
+        total_a = len(audio_segs)
+        log_msg(
+            f"    {C.BLUE}◆{C.RESET} Downloading audio track ({total_a} segments)...",
+            debug=True,
+        )
+        file_logger.log("AUDIO_DOWNLOAD", f"Downloading {total_a} audio segments", details={
+            "playlist_url": audio_playlist_url,
+        })
+
+        audio_chunks_dir = Path(f"{output_ts_path}.audio_chunks")
+        audio_chunks_dir.mkdir(exist_ok=True)
+        downloaded_a: set[int] = set()
+        stats_a = DownloadStats()
+        fail_a = _FailCounter(threshold=_FAIL_THRESHOLD)
+
+        # Fresh thread-local for audio workers
+        global _thread_local
+        saved_tl = _thread_local
+        _thread_local = threading.local()
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures_a = {
+                pool.submit(
+                    download_segment_with_retry,
+                    i, url, headers, stats_a, audio_key, fail_a,
+                ): i
+                for i, url in enumerate(audio_segs)
+            }
+            for fut in as_completed(futures_a):
+                try:
+                    i, data = fut.result()
+                    (audio_chunks_dir / f"{i:06d}.ts").write_bytes(data)
+                    downloaded_a.add(i)
+                except Exception:
+                    if fail_a.abort.is_set():
+                        for f in futures_a:
+                            f.cancel()
+                        break
+                    continue
+
+        # Restore original thread-local so video workers are unaffected
+        _thread_local = saved_tl
+
+        if len(downloaded_a) != total_a:
+            log_msg(
+                f"    {C.YELLOW}⚠{C.RESET} Audio incomplete: "
+                f"{total_a - len(downloaded_a)} chunks missing — will mux without audio track.",
+            )
+            import shutil
+            shutil.rmtree(audio_chunks_dir, ignore_errors=True)
+            return False
+
+        # Assemble audio TS
+        with open(output_ts_path, "wb") as f:
+            for i in range(total_a):
+                p = audio_chunks_dir / f"{i:06d}.ts"
+                f.write(p.read_bytes())
+                p.unlink()
+        try:
+            audio_chunks_dir.rmdir()
+        except OSError:
+            pass
+
+        log_msg(f"    {C.GREEN}✔{C.RESET} Audio track assembled ({stats_a.get_speed_string()})", debug=True)
+        return True
+
+    except Exception as exc:
+        log_msg(f"    {C.YELLOW}⚠{C.RESET} Audio track download failed: {exc}")
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Main download entry point
 # ---------------------------------------------------------------------------
 def download_hls(
@@ -670,45 +926,69 @@ def download_hls(
     delay: float = 0.0,
     target_res: int = 0,
     *,
+    audio_lang: str = "en",
     _preprobed: dict | None = None,
 ) -> bool:
     """
     Download an HLS stream to an MP4 file.
 
+    Demuxed-audio support (backwards-compatible):
+    - If the master playlist contains separate EXT-X-MEDIA TYPE=AUDIO tracks,
+      the audio track matching `audio_lang` (default "en" = dub) is downloaded
+      in parallel and muxed into the final MP4 via a two-input FFmpeg call.
+    - If no demuxed audio tracks exist (older/muxed streams) the behaviour is
+      identical to before — single-input FFmpeg remux, no change.
+
     If `_preprobed` is provided (from race_servers), skip the playlist fetch
     and reuse the already-fetched segments + first chunk.
     """
     global pbar
-    temp_ts = f"{output_path}.temp.ts"
+    temp_ts       = f"{output_path}.temp.ts"
+    temp_audio_ts = f"{output_path}.temp_audio.ts"
     wait_for_internet()
+
+    # ---- Determine audio playlist URL (if demuxed) -------------------------
+    audio_playlist_url: str | None = None
 
     if _preprobed:
         segment_urls = _preprobed["segments"]
-        key_info = _preprobed["key_info"]
-        dl_headers = _preprobed.get("headers") or headers
+        key_info     = _preprobed["key_info"]
+        dl_headers   = _preprobed.get("headers") or headers
+        # audio info injected by probe_server
+        audio_playlist_url = _preprobed.get("audio_playlist_url")
+        if not audio_playlist_url:
+            # Fallback: re-pick from audio_map using our preferred lang
+            audio_map = _preprobed.get("audio_map") or {}
+            _, audio_playlist_url = _pick_audio_lang(audio_map, audio_lang)
     else:
         session = get_session(headers)
         try:
-            segment_urls, key_info = fetch_playlist_segments(
-                playlist_url, session, target_res
+            segment_urls, key_info, audio_map, audio_playlist_url = fetch_playlist_segments(
+                playlist_url, session, target_res, _audio_lang=audio_lang
             )
         except Exception as e:
             if not is_online():
                 wait_for_internet()
-                return download_hls(playlist_url, output_path, headers, workers, delay, target_res)
+                return download_hls(
+                    playlist_url, output_path, headers, workers,
+                    delay, target_res, audio_lang=audio_lang,
+                )
             log_msg(f"    {C.YELLOW}⚠{C.RESET} Failed to fetch playlist: {e}")
             return False
         dl_headers = headers
 
     # Derive Referer from first chunk URL's domain if not already set
     if segment_urls and dl_headers:
-        chunk_host = urllib.parse.urlparse(segment_urls[0])
+        chunk_host   = urllib.parse.urlparse(segment_urls[0])
         chunk_origin = f"{chunk_host.scheme}://{chunk_host.netloc}"
-        # If the chunk CDN is different from the Referer domain, update it
         if "Referer" in dl_headers:
             ref_host = urllib.parse.urlparse(dl_headers["Referer"]).netloc
             if ref_host != chunk_host.netloc:
-                log_msg(f"    {C.BLUE}◆{C.RESET} Chunk CDN ({chunk_host.netloc}) differs from Referer ({ref_host})", debug=True)
+                log_msg(
+                    f"    {C.BLUE}◆{C.RESET} Chunk CDN ({chunk_host.netloc}) "
+                    f"differs from Referer ({ref_host})",
+                    debug=True,
+                )
 
     total = len(segment_urls)
     if total == 0:
@@ -735,7 +1015,6 @@ def download_hls(
         srv_name = ""
         if _preprobed and "server_name" in _preprobed:
             srv_name = f" [{_preprobed['server_name']}]"
-            
         pbar = tqdm(
             total=total,
             initial=len(downloaded),
@@ -751,9 +1030,20 @@ def download_hls(
 
     # Reset thread-local sessions so workers get fresh sessions with correct
     # headers (Referer, Origin) for this specific provider/episode.
-    # Creating a new threading.local() object forces all threads to re-initialize.
     global _thread_local
     _thread_local = threading.local()
+
+    # ---- Kick off audio download in background (if demuxed) ----------------
+    audio_future = None
+    if audio_playlist_url:
+        log_msg(
+            f"    {C.BLUE}◆{C.RESET} Demuxed audio detected — downloading '{audio_lang}' track in parallel...",
+        )
+        _audio_pool = ThreadPoolExecutor(max_workers=1)
+        audio_future = _audio_pool.submit(
+            _download_audio_track,
+            audio_playlist_url, dl_headers, temp_audio_ts, workers,
+        )
 
     try:
         with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -764,7 +1054,6 @@ def download_hls(
                 ): idx
                 for idx, url in remaining
             }
-            # Iterate over completed chunk downloads as they finish
             for future in as_completed(futures):
                 try:
                     idx, data = future.result()
@@ -779,7 +1068,7 @@ def download_hls(
                         _emit_progress(len(downloaded), total, stats)
                     else:
                         done = len(downloaded)
-                        pct = (done / total) * 100
+                        pct  = (done / total) * 100
                         print(
                             f"\r    {C.BLUE}◆{C.RESET} [{done}/{total}] {pct:.1f}% | "
                             f"Speed: {stats.get_speed_string()}",
@@ -787,11 +1076,9 @@ def download_hls(
                         )
                 except Exception:
                     if fail_counter.abort.is_set():
-                        # Cancel remaining futures
                         for f in futures:
                             f.cancel()
                         raise
-                    # Individual chunk failed but threshold not reached — continue
                     continue
     except Exception as e:
         if pbar:
@@ -800,10 +1087,13 @@ def download_hls(
         err = fail_counter.first_error or str(e)
         log_msg(f"\n    {C.RED}✘{C.RESET} Download aborted ({fail_counter._count} chunks failed): {err}")
         mark_server(playlist_url, False)
-        # Clean up stranded chunks directory
         if chunks_dir.exists():
             import shutil
             shutil.rmtree(chunks_dir, ignore_errors=True)
+        # Cancel audio download if running
+        if audio_future:
+            audio_future.cancel()
+            _audio_pool.shutdown(wait=False)
         return False
 
     if pbar:
@@ -814,8 +1104,8 @@ def download_hls(
     elif not TQDM_AVAILABLE:
         print()
 
-    # ---- Assemble TS -------------------------------------------------------
-    log_msg(f"    {C.BLUE}◆{C.RESET} Assembling TS stream...", debug=True)
+    # ---- Assemble video TS -------------------------------------------------
+    log_msg(f"    {C.BLUE}◆{C.RESET} Assembling video TS stream...", debug=True)
     with open(temp_ts, "wb") as f:
         for i in range(total):
             if i in downloaded:
@@ -824,60 +1114,105 @@ def download_hls(
                 chunk_path.unlink()
             else:
                 log_msg(f"    {C.RED}✘{C.RESET} Warning: missing chunk {i}")
-    
     try:
         chunks_dir.rmdir()
     except OSError:
         pass
 
-    # Validate that all chunks completed download without gaps
+    # Validate completeness
     if len(downloaded) != total:
         missing_count = total - len(downloaded)
-        log_msg(f"    {C.RED}✘{C.RESET} Incomplete download: {missing_count} chunk(s) missing out of {total}. Aborting remux.")
+        log_msg(
+            f"    {C.RED}✘{C.RESET} Incomplete download: "
+            f"{missing_count} chunk(s) missing out of {total}. Aborting remux."
+        )
         mark_server(playlist_url, False)
         if chunks_dir.exists():
             import shutil
             shutil.rmtree(chunks_dir, ignore_errors=True)
         return False
 
+    # ---- Wait for audio track (if any) ------------------------------------
+    has_separate_audio = False
+    if audio_future:
+        log_msg(f"    {C.BLUE}◆{C.RESET} Waiting for audio track...", debug=True)
+        try:
+            has_separate_audio = audio_future.result(timeout=300)
+        except Exception as exc:
+            log_msg(f"    {C.YELLOW}⚠{C.RESET} Audio download exception: {exc}")
+            has_separate_audio = False
+        finally:
+            _audio_pool.shutdown(wait=False)
+
     # ---- Remux to MP4 ------------------------------------------------------
     log_msg(f"    {C.BLUE}◆{C.RESET} Remuxing to MP4...", debug=True)
-    ffmpeg_cmd = [
-        "ffmpeg", "-y",
-        "-fflags", "+genpts",
-        "-i", temp_ts,
-        "-c", "copy",
-        "-movflags", "+faststart",
-        "-loglevel", "error",
-        str(output_path)
-    ]
+
+    if has_separate_audio and os.path.exists(temp_audio_ts):
+        # Two-input mux: separate video and audio TS streams
+        log_msg(f"    {C.GREEN}✔{C.RESET} Muxing with separate audio track (dub).", debug=True)
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-fflags", "+genpts",
+            "-i", temp_ts,
+            "-i", temp_audio_ts,
+            "-map", "0:v:0",    # video from first input
+            "-map", "1:a:0",    # audio from second input
+            "-c", "copy",
+            "-movflags", "+faststart",
+            "-loglevel", "error",
+            str(output_path),
+        ]
+    else:
+        # Single-input mux (muxed stream, or audio download failed)
+        if audio_playlist_url and not has_separate_audio:
+            log_msg(
+                f"    {C.YELLOW}⚠{C.RESET} Audio track unavailable — "
+                "falling back to single-input mux (may be silent)."
+            )
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-fflags", "+genpts",
+            "-i", temp_ts,
+            "-c", "copy",
+            "-movflags", "+faststart",
+            "-loglevel", "error",
+            str(output_path),
+        ]
+
     t_ff0 = time.monotonic()
     try:
-        proc = subprocess.run(
-            ffmpeg_cmd,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
         t_ff_dur = time.monotonic() - t_ff0
         if not os.path.exists(output_path) or os.path.getsize(output_path) < 1024:
             log_msg(f"    {C.YELLOW}⚠{C.RESET} FFmpeg produced an empty or missing output file.")
-            file_logger.log_ffmpeg(ffmpeg_cmd, returncode=1, duration_sec=t_ff_dur, output_path=str(output_path), error_output="Output file empty or missing after remux")
+            file_logger.log_ffmpeg(
+                ffmpeg_cmd, returncode=1, duration_sec=t_ff_dur,
+                output_path=str(output_path),
+                error_output="Output file empty or missing after remux",
+            )
             return False
-
         file_logger.log_ffmpeg(ffmpeg_cmd, returncode=0, duration_sec=t_ff_dur, output_path=str(output_path))
         mark_server(playlist_url, True)
         return True
     except FileNotFoundError:
         t_ff_dur = time.monotonic() - t_ff0
         log_msg(f"    {C.RED}✘{C.RESET} FFmpeg is not installed or not in system PATH.")
-        file_logger.log_ffmpeg(ffmpeg_cmd, returncode=127, duration_sec=t_ff_dur, output_path=str(output_path), error_output="FFmpeg binary not found on system PATH")
+        file_logger.log_ffmpeg(
+            ffmpeg_cmd, returncode=127, duration_sec=t_ff_dur,
+            output_path=str(output_path),
+            error_output="FFmpeg binary not found on system PATH",
+        )
         return False
     except subprocess.CalledProcessError as e:
         t_ff_dur = time.monotonic() - t_ff0
         log_msg(f"    {C.YELLOW}⚠{C.RESET} FFmpeg remux failed: {e.stderr.strip() if e.stderr else e}")
-        file_logger.log_ffmpeg(ffmpeg_cmd, returncode=e.returncode, duration_sec=t_ff_dur, output_path=str(output_path), error_output=e.stderr or str(e))
+        file_logger.log_ffmpeg(
+            ffmpeg_cmd, returncode=e.returncode, duration_sec=t_ff_dur,
+            output_path=str(output_path), error_output=e.stderr or str(e),
+        )
         return False
     finally:
         if os.path.exists(temp_ts):
             os.remove(temp_ts)
+        if os.path.exists(temp_audio_ts):
+            os.remove(temp_audio_ts)
